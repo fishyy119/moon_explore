@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                // 这个是让子文件夹中的Python查找到根目录中模块的关键
+                // 但是只在调试环境下有用
+                // 更通用的还是在 setting 中设置 terminal.integrated.env
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
