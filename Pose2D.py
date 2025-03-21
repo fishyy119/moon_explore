@@ -21,12 +21,33 @@ class Pose2D:
         else:
             self._yaw = yaw
 
+    @classmethod
+    def from3Dq(cls) -> "Pose2D":
+        return cls(1, 1, 1)
+
     @property
-    def SE2(self) -> NDArray[np.float64]:
+    def t(self) -> NDArray[np.float64]:
+        return np.array([[self._x], [self._y]])
+
+    @property
+    def SO2(self) -> NDArray[np.float64]:
         "表示在全局坐标系"
         cos_y = np.cos(self._yaw)
         sin_y = np.sin(self._yaw)
-        return np.array([[cos_y, -sin_y, self._x], [sin_y, cos_y, self._y], [0, 0, 1]])
+        return np.array([[cos_y, -sin_y], [sin_y, cos_y]])
+
+    @property
+    def SO2inv(self) -> NDArray[np.float64]:
+        return self.SO2.T
+
+    @property
+    def SE2(self) -> NDArray[np.float64]:
+        "表示在全局坐标系"
+        return np.block([[self.SO2, self.t], [np.zeros(2), 1]])
+
+    @property
+    def SE2inv(self) -> NDArray[np.float64]:
+        return np.block([[self.SO2inv, -self.SO2inv @ self.t], [np.zeros(2), 1]])
 
     @property
     def x(self) -> float:
