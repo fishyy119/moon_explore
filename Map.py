@@ -1,4 +1,3 @@
-from math import ceil
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -21,100 +20,120 @@ class Map:
         self.obstacle_mask = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask[300:, 300:] = True
 
-    def _precompute_standard_sector_mask(self, pose: Pose2D) -> NDArray[np.bool_]:
-        """预生成一个偏航角为0时的扇形，在局部栅格中"""
-        shape = ceil(Map.MAX_RANGE * Map.MAP_SCALE * Map.SECTOR_SCALE * 2 + 1)
-        center = shape // 2
+    def cal_r_max(
+        self,
+        theta_max: NDArray[np.float64],
+        theta_min: NDArray[np.float64],
+        target_yaw: float,
+        r: NDArray[np.float64],
+        deg_type: int = 180,
+    ) -> NDArray[np.float64]:
+        """
+        一个封装的计算各个格点理论上最大可视距离的函数，
+        由于角度的环形度量会影响间断点处的大小比较，
+        因此这个函数在两种不同的角度范围约定下运行两次，最后取并集
+
+        在360的FOV下，对于正后方的一条线会有计算错误，这种整个环形全部可视的情况无法通过两次截断模拟出来
+        两次计算的断点刚好在正后方，而对于覆盖的判断需要覆盖整个栅格，截断刚好漏掉这里的格子
+        （不过调成400就可以模拟360度全覆盖了）
+
+        Args:
+            theta_max (NDArray[np.float64]): 每个格子对应一个角度范围，这是最大值
+            theta_min (NDArray[np.float64]): 每个格子对应一个角度范围，这是最小值
+            target_yaw (float): 巡视器的目标朝向，在其左右根据FOV扩展
+            r (NDArray[np.float64]): 各个格点到巡视器的距离
+            deg_type (int, optional): 标识使用了何种角度范围，对应处理巡视器的视角边界处角度值
+
+        Returns:
+            NDArray[np.float64]: 每个格点的理论最大可视距离（考虑FOV、障碍）
+        """
+        # 考虑障碍物，每个角度上最大可视距离
+        r_max = np.zeros_like(r)
+        range_min = target_yaw - Map.FOV / 2
+        range_max = target_yaw + Map.FOV / 2
+
+        # 设计上这个函数在两个不同的角度值范围约定下运行两次取并集，因此这里可以舍弃间断点导致的跳跃值
+        if deg_type == 180:
+            range_min = max(range_min, -180)
+            range_max = min(range_max, 180.1)  # 感觉对于边界应该取大一点，但是没有测试
+        elif deg_type == 360:
+            range_min = max(range_min, 0)
+            range_max = min(range_max, 360.1)
+        else:
+            raise NotImplementedError
+
+        r_max[(range_min <= theta_min) & (theta_max <= range_max)] = Map.MAX_RANGE * Map.MAP_SCALE
+
+        # 提取障碍物的角度范围和距离
+        ob_r = r[self.obstacle_mask]
+        ob_theta_max = theta_max[self.obstacle_mask]
+        ob_theta_min = theta_min[self.obstacle_mask]
+
+        # **先对障碍物按角度排序**
+        sort_idx = np.argsort(ob_theta_min)
+        ob_theta_min_sorted = ob_theta_min[sort_idx]
+        ob_theta_max_sorted = ob_theta_max[sort_idx]
+        ob_r_sorted = ob_r[sort_idx]
+
+        # **对栅格的 theta_min 进行排序，便于搜索**
+        theta_min_flat = theta_min.ravel()
+        theta_max_flat = theta_max.ravel()
+        r_max_flat = r_max.ravel()  # 注意这是引用
+
+        theta_sort_idx = np.argsort(theta_min_flat)
+        theta_min_sorted = theta_min_flat[theta_sort_idx]
+        theta_max_sorted = theta_max_flat[theta_sort_idx]
+
+        # **利用 `searchsorted` 找到受影响的索引范围**
+        start_idx = np.searchsorted(theta_min_sorted, ob_theta_min_sorted, side="left")
+        end_idx = np.searchsorted(theta_max_sorted, ob_theta_max_sorted, side="right")
+
+        # **批量更新 r_max**
+        for i in range(len(ob_r_sorted)):
+            affected_indices = theta_sort_idx[start_idx[i] : end_idx[i]]
+            np.minimum.at(r_max_flat, affected_indices, ob_r_sorted[i])
+
+        return r_max
+
+    def generate_sector_mask(self, pose: Pose2D) -> NDArray[np.bool_]:
+        """计算扇形范围，考虑障碍"""
+        if self.obstacle_mask[round(pose.y * Map.MAP_SCALE), round(pose.x * Map.MAP_SCALE)]:
+            # 卡墙里就别算了
+            return np.zeros_like(self.mask, dtype=np.bool_)
 
         # 创建坐标网格
+        shape, shape = self.mask.shape
         x, y = np.meshgrid(np.arange(shape), np.arange(shape))
-        dx = x - center
-        dy = y - center
+        dx = x - pose.x * Map.MAP_SCALE
+        dy = y - pose.y * Map.MAP_SCALE
 
         # 计算极坐标
         r = np.sqrt(dx**2 + dy**2)
-        theta = np.round(np.degrees(np.arctan2(dy, dx))).astype(np.int32)
 
-        # 考虑障碍物，每个角度上最大可视距离
-        r_max = np.zeros_like(r)
-        r_max[(-Map.FOV / 2 <= theta) & (theta <= Map.FOV / 2)] = Map.MAX_RANGE * Map.MAP_SCALE * Map.SECTOR_SCALE
+        # 对于角度，计算栅格四个顶点的角度，然后存储最大值与最小值
+        theta_ur = np.degrees(np.arctan2(dy + 0.5, dx + 0.5))
+        theta_ul = np.degrees(np.arctan2(dy + 0.5, dx - 0.5))
+        theta_br = np.degrees(np.arctan2(dy - 0.5, dx + 0.5))
+        theta_bl = np.degrees(np.arctan2(dy - 0.5, dx - 0.5))
 
-        # 障碍物由全局坐标系转换到局部
-        y_idxs, x_idxs = np.where(self.obstacle_mask)
-        ob_points_global = np.stack([x_idxs / Map.MAP_SCALE, y_idxs / Map.MAP_SCALE, np.ones_like(x_idxs)])  # [3, N]
-        # # 加密一下，不然会有空隙
-        # ob_points_global = np.hstack(
-        #     [
-        #         ob_points_global,
-        #         ob_points_global
-        #         + np.array([[1 / Map.MAP_SCALE / Map.SECTOR_SCALE], [1 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0]]),
-        #         ob_points_global
-        #         + np.array([[2 / Map.MAP_SCALE / Map.SECTOR_SCALE], [2 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0]]),
-        #         ob_points_global
-        #         + np.array([[0.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0]]),
-        #         ob_points_global
-        #         + np.array([[1.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [1.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0]]),
-        #         ob_points_global
-        #         + np.array([[2.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [2.5 / Map.MAP_SCALE / Map.SECTOR_SCALE], [0]]),
-        #     ]
-        # )
-        ob_points_local = (pose.SE2inv @ ob_points_global) * Map.MAP_SCALE * Map.SECTOR_SCALE
-        x_f, y_f = ob_points_local[0, :], ob_points_local[1, :]
+        theta_max: NDArray[np.float64] = np.maximum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
+        theta_min: NDArray[np.float64] = np.minimum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
 
-        i = np.round(x_f + center).astype(int)
-        j = np.round(y_f + center).astype(int)
-        i = np.clip(i, 0, shape - 1)
-        j = np.clip(j, 0, shape - 1)
-        ob_mask: NDArray[np.bool_] = np.zeros_like(r, dtype=np.bool_)
-        ob_mask[j, i] = True
+        r_max1 = self.cal_r_max(theta_max, theta_min, pose.yaw_deg180, r)
 
-        ob_r = r[ob_mask]
-        ob_arg = ob_r.argsort()
-        ob_theta = theta[ob_mask][ob_arg]
-        ob_r = ob_r[ob_arg]
+        # 将角度范围变换到0~360，再运算一次，两者取并集
+        theta_max_t = (theta_max + 360) % 360
+        theta_min_t = (theta_min + 360) % 360
+        # 新范围下原边界点处大小出现错乱
+        theta_max = np.maximum(theta_max_t, theta_min_t)
+        theta_min = np.minimum(theta_max_t, theta_min_t)
+        r_max2 = self.cal_r_max(theta_max, theta_min, pose.yaw_deg360, r, deg_type=360)
 
-        # 获取唯一的角度索引
-        unique_ob_theta, unique_indices = np.unique(ob_theta, return_index=True)
-        unique_ob_r_min = ob_r[unique_indices]  # 每个角度的最近障碍物距离(前面对r排序了)
-
-        # 找到 r_max 需要更新的索引
-        row_indices, col_indices = np.where(np.isin(theta, unique_ob_theta))
-        theta_flat = theta[row_indices, col_indices]  # 扁平化后的角度数组
-
-        # 获取这些角度的最小可视距离，虽然是插值，但是目标坐标都是给定点
-        r_values = np.interp(theta_flat, unique_ob_theta, unique_ob_r_min)
-
-        # 使用 `np.minimum.at` 批量更新 r_max
-        np.minimum.at(r_max, (row_indices, col_indices), r_values)
+        r_max = np.maximum(r_max1, r_max2)
 
         # 按照矩阵的样式，维度0对应y，维度1对应x
         mask = r <= r_max
         return mask
-
-    def generate_sector_mask(self, pose: Pose2D) -> NDArray[np.bool_]:
-        """对预生成的扇形遮罩应用SE2变换"""
-        scale = Map.MAP_SCALE * Map.SECTOR_SCALE
-
-        # 局部坐标系内的点，单位缩放到米
-        local_mask = self._precompute_standard_sector_mask(pose)
-        h, w = local_mask.shape
-        cx, cy = w // 2, h // 2
-        y_idxs, x_idxs = np.where(local_mask)
-        local_points = np.stack([(x_idxs - cx) / scale, (y_idxs - cy) / scale, np.ones_like(x_idxs)])  # [3, N]
-
-        # 变换到全局坐标系，四舍五入覆盖到全局栅格
-        global_points = (pose.SE2 @ local_points) * Map.MAP_SCALE
-        x_f, y_f = global_points[0, :], global_points[1, :]
-        i = np.round(x_f).astype(int)
-        j = np.round(y_f).astype(int)
-        H, W = self.mask.shape
-        i = np.clip(i, 0, H - 1)
-        j = np.clip(j, 0, W - 1)
-        global_mask = np.zeros((H, W), dtype=np.bool_)
-        # 维度0对应y，维度1对应x
-        global_mask[j, i] = True
-
-        return global_mask
 
     def rover_move(self, pose: Pose2D) -> None:
         self.mask |= self.generate_sector_mask(pose)
@@ -153,7 +172,7 @@ class MaskViewer:
 if __name__ == "__main__":
     map = Map()
     map.rover_move(Pose2D(40, 40, 0.3))
-    map.rover_move(Pose2D(30, 30, 0.3))
-    map.rover_move(Pose2D(20, 20, 0.3))
+    map.rover_move(Pose2D(29, 29, 0.5))
+    map.rover_move(Pose2D(20, 20, 3))
     viewer = MaskViewer(map)
     viewer.show_mask()

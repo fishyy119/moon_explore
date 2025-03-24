@@ -77,10 +77,12 @@ class Pose2D:
         self._yaw = value
 
     @property
-    def yaw_deg(self) -> float:
-        "偏航角，角度制"
-        return math.degrees(self._yaw)
+    def yaw_deg180(self) -> float:
+        """返回 (-180, 180] 的角度值"""
+        deg = math.degrees(self._yaw) % 360
+        return (deg + 180) % 360 - 180
 
-    @yaw_deg.setter
-    def yaw_deg(self, value: float) -> None:
-        self._yaw = math.radians(value)
+    @property
+    def yaw_deg360(self) -> float:
+        """返回 [0, 360) 的角度值"""
+        return math.degrees(self._yaw) % 360
