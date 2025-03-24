@@ -1,6 +1,7 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+from scipy.signal import argrelextrema
+from scipy.ndimage import binary_erosion
+import cv2
 from Pose2D import Pose2D
 
 from typing import Tuple, List, Callable
@@ -138,41 +139,126 @@ class Map:
     def rover_move(self, pose: Pose2D) -> None:
         self.mask |= self.generate_sector_mask(pose)
 
+    def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
+        """提取网格地图的边界点"""
+        eroded = binary_erosion(mask).astype(np.bool_)
+        boundary = mask & ~eroded
+        self.boundary = boundary
+        return boundary
 
-class MaskViewer:
-    def __init__(self, map_instance: Map):
-        self.map = map_instance
+    def get_contours(self, boundary: NDArray[np.bool_]) -> List[NDArray[np.int32]]:
+        """提取连续曲线轮廓"""
+        binary_mask = boundary.astype(np.uint8) * 255
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        self.contours: List[NDArray[np.int32]] = []
+        for contour in contours:
+            contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
+            self.contours.append(contour)
+        return self.contours
 
-    def show_mask(self) -> None:
-        fig, ax = plt.subplots()
-        im = ax.imshow(self.map.mask, cmap="gray_r", origin="lower")
+    def curvature_discrete(self, points: NDArray[np.int32]) -> NDArray[np.float64]:
+        """
+        以5个点的移动窗口，计算各点离散曲率
 
-        ax.set_title("Sector Mask Viewer")
-        plt.colorbar(im, ax=ax)
-        plt.show()
+        Args:
+            points (NDArray[np.int32]): 一组二维点 (N, 2)
 
-    def show_anime(self) -> None:
-        self.fig, self.ax = plt.subplots()
+        Returns:
+            NDArray[np.float64]: 各个中间点的曲率列表(首尾各有两个点算不到)
+        """
+        windows = 2  # 要计算某一点，利用前后各windows个点的信息
+        # windows=1不太行，对于直线突然有一个点突出的情况不好
 
-        # 初始化掩码显示
-        self.im = self.ax.imshow(self.map.mask, cmap="gray_r", origin="lower", animated=True)
-        self.ax.set_title("Sector Mask Viewer")
-        self.fig.colorbar(self.im, ax=self.ax)
+        # 计算两个向量求出夹角
+        if windows == 2:
+            v1 = points[1:-3] - points[:-4]  # P_{i-2} -> P_{i-1}
+            v2 = points[4:] - points[3:-1]  # P_{i+1} -> P_{i+2}
+        elif windows == 1:
+            v1 = points[1:-1] - points[:-2]  # P_{i-1} -> P_{i}
+            v2 = points[2:] - points[1:-1]  # P_{i} -> P_{i+1}
+        else:
+            raise NotImplementedError
+        cross = v1[:, 0] * v2[:, 1] - v1[:, 1] * v2[:, 0]  # 叉积
+        dot = v1[:, 0] * v2[:, 0] + v1[:, 1] * v2[:, 1]  # 点积
+        theta = np.arctan2(cross, dot)  # 直接获得正确的角度
 
-        # 设置 30Hz 更新频率
-        self.ani = animation.FuncAnimation(self.fig, self.update, interval=33.3, blit=True, cache_frame_data=False)
-        plt.show()
+        # 计算近似弧长（每个点处的弧长取其左右线段各一半）
+        segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)  # 所有相邻点的距离
+        segment_lengths = (segment_lengths[:-1] + segment_lengths[1:]) / 2
+        if windows == 2:
+            ds = segment_lengths[:-2] + segment_lengths[1:-1] + segment_lengths[2:]
+        else:
+            ds = segment_lengths
 
-    def update(self, _):
-        """每帧更新 `map.mask` 可视化"""
-        self.im.set_data(self.map.mask)  # 直接读取 map.mask
-        return (self.im,)  # `blit=True` 需要返回可更新的对象
+        # 计算曲率 κ = θ / ds
+        curvatures = np.abs(theta) / ds  # 目前不太关心弯曲的方向
+
+        return curvatures
+
+    def detect_peaks(self, curvature: NDArray[np.float64], contour: NDArray[np.int32], threshold=0.3) -> List[int]:
+        """
+        使用阈值检测曲率峰值来提取拐点，同时合并同一个峰的多个点，添加首尾点
+
+        Args:
+            curvature (NDArray[np.float64]): 曲率（需要注意其尺寸略短于contour）
+            contour (NDArray[np.int32]): 轮廓点
+            threshold (float, optional): 曲率阈值
+
+        Returns:
+            List[int]: 拐点在contour上对应的索引
+        """
+        # 1. 先找到所有局部极大值
+        local_maxima = argrelextrema(curvature, np.greater_equal, order=1)[0]
+
+        # 2. 过滤掉低于阈值的峰值
+        peak_indices = [idx for idx in local_maxima if curvature[idx] > threshold]
+
+        # 3. 处理平峰：查找平峰区间，并保留中间的点
+        diff = np.diff(peak_indices)
+        new_peaks: List[int] = []
+        cnt = 0
+        start = peak_indices[0]
+
+        for i, d in enumerate(diff):
+            if d == 1:
+                cnt += 1  # 记录连续峰的数量
+                continue
+            else:
+                if cnt > 0:
+                    new_peaks.append((start + peak_indices[i]) // 2)  # 取中间点
+                else:
+                    new_peaks.append(peak_indices[i])  # 记录单独的峰
+                start = peak_indices[i + 1]  # 更新新的起点
+                cnt = 0
+
+        # 处理最后一段
+        if cnt > 0:
+            new_peaks.append((start + peak_indices[-1]) // 2)
+        else:
+            new_peaks.append(peak_indices[-1])
+
+        new_peaks = [peak + 2 for peak in new_peaks]  # 曲率没求边缘点，为了和contour中对齐，手动加2
+
+        # 4. 添加首点和尾点，如果首尾点接近则去除一个
+        first_point = contour[0]
+        last_point = contour[-1]
+        if np.linalg.norm(first_point - last_point) <= 2:
+            new_peaks.insert(0, 0)
+        else:
+            new_peaks.append(len(contour) - 1)
+            new_peaks.insert(0, 0)
+
+        return new_peaks
 
 
 if __name__ == "__main__":
+    from Viewer import MaskViewer
+
     map = Map()
     map.rover_move(Pose2D(40, 40, 0.3))
     map.rover_move(Pose2D(29, 29, 0.5))
     map.rover_move(Pose2D(20, 20, 3))
+    map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
+    map.get_contours(map.boundary)
     viewer = MaskViewer(map)
     viewer.show_mask()
