@@ -1,5 +1,11 @@
 import math
 import numpy as np
+from scipy.spatial.transform import Rotation
+
+try:
+    from geometry_msgs.msg import Pose  # type: ignore # 实际 ROS2 环境中导入真实包
+except ModuleNotFoundError:
+    from FakeROS import Pose  # Windows 环境导入模拟类
 
 from numpy.typing import NDArray
 
@@ -13,6 +19,7 @@ class Pose2D:
             x (float): 全局x坐标
             y (float): 全局y坐标
             yaw (float): 弧度制偏航角
+            deg (bool): 如果为True，则使用角度制定义偏航角，默认为False
         """
         self._x = x
         self._y = y
@@ -20,6 +27,23 @@ class Pose2D:
             self._yaw = math.radians(yaw)
         else:
             self._yaw = yaw
+
+    @classmethod
+    def from_pose_msg(cls, pose_msg: Pose) -> "Pose2D":
+        """
+        从 ROS Pose 消息创建 Pose2D 实例
+
+        Args:
+            pose_msg (Pose): ROS 2 中的 geometry_msgs.msg.Pose 消息
+
+        Returns:
+            Pose2D: 生成的二维位姿
+        """
+        x = pose_msg.position.x
+        y = pose_msg.position.y
+        quat = pose_msg.orientation
+        yaw = Rotation.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler("xyz")[2]
+        return cls(x, y, yaw)
 
     @classmethod
     def from3Dq(cls) -> "Pose2D":
