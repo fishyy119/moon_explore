@@ -27,6 +27,7 @@ class Pose2D:
     def from_pose_msg(cls, x, y, qx, qy, qz, qw) -> "Pose2D":
         """
         从 ROS Pose 消息创建 Pose2D 实例
+        这里不处理 Pose 消息的实例，因此参数是提取后的
 
         Args:
             ROS 2 中的 geometry_msgs.msg.Pose 消息中的必要参数
@@ -36,10 +37,6 @@ class Pose2D:
         """
         yaw = Rotation.from_quat([qx, qy, qz, qw]).as_euler("xyz")[2]
         return cls(x, y, yaw)
-
-    @classmethod
-    def from3Dq(cls) -> "Pose2D":
-        return cls(1, 1, 1)
 
     @property
     def t(self) -> NDArray[np.float64]:

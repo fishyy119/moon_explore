@@ -88,6 +88,7 @@ class Map:
         theta_max_sorted = theta_max_flat[theta_sort_idx]
 
         # **利用 `searchsorted` 找到受影响的索引范围**
+        #! 我总感觉这里的最大值排序寻找end_idx是不太对的，但是目前还没出大问题
         start_idx = np.searchsorted(theta_min_sorted, ob_theta_min_sorted, side="left")
         end_idx = np.searchsorted(theta_max_sorted, ob_theta_max_sorted, side="right")
 
@@ -276,5 +277,7 @@ if __name__ == "__main__":
     map.rover_move(Pose2D(20, 20, 3))
     map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
     map.get_contours(map.mask)
+
     viewer = MaskViewer(map)
-    viewer.show_mask()
+    viewer.plot_pose2d(Pose2D(23, 20, 0))
+    viewer.show()
