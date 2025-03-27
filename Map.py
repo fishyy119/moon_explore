@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.signal import argrelextrema
-from scipy.ndimage import binary_erosion
+from scipy.ndimage import binary_erosion, binary_dilation
 import cv2
+import skimage
 from Pose2D import Pose2D
 
 from typing import Tuple, List, Callable
@@ -20,6 +21,7 @@ class Map:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask[300:, 300:] = True
+        self.rover_pose = Pose2D(0, 0, 0)
 
     def cal_r_max(
         self,
@@ -133,26 +135,38 @@ class Map:
         r_max = np.maximum(r_max1, r_max2)
 
         # 按照矩阵的样式，维度0对应y，维度1对应x
-        mask = r <= r_max
+        # 这里理论上应该是<=，但是前面r_max计算索引的地方恐怕有问题，出此下策先用<判断再膨胀一下
+        mask = r < r_max
+        return binary_dilation(mask).astype(np.bool_)
         return mask
 
     def rover_move(self, pose: Pose2D) -> None:
+        self.rover_pose = pose
         self.mask |= self.generate_sector_mask(pose)
 
     def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
         """提取网格地图的边界点"""
         eroded = binary_erosion(mask).astype(np.bool_)
         boundary = mask & ~eroded
+        boundary = boundary & ~self.obstacle_mask
         self.boundary = boundary
         return boundary
 
     def get_contours(self, boundary: NDArray[np.bool_]) -> List[NDArray[np.int32]]:
-        """提取连续曲线轮廓"""
+        """提取连续曲线轮廓，这里传参还是不要传边界点，直接传可视范围就好"""
         binary_mask = boundary.astype(np.uint8) * 255
-        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        # cv2方法和ski方法都只能提闭合轮廓，如果传边界点的话，独立线段会提出双层结果
+        # 但是ski方法找到了一个mask参数来进一步处理提取结果，这样就可以把障碍信息传进去，最后效果就是提出了闭合轮廓舍弃障碍的部分
+        # contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        contours = skimage.measure.find_contours(
+            binary_mask, level=254, fully_connected="high", positive_orientation="high", mask=~self.obstacle_mask
+        )  # 这里的level，取1则提取到外侧一圈，取254则提取到内侧点上，128则是交界处
         self.contours: List[NDArray[np.int32]] = []
         for contour in contours:
-            contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
+            if len(contour) < 10:
+                # 舍弃太短的结果，对于各种操作都不方便
+                continue
+            # contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
             self.contours.append(contour)
         return self.contours
 
@@ -195,7 +209,7 @@ class Map:
 
         return curvatures
 
-    def detect_peaks(self, curvature: NDArray[np.float64], contour: NDArray[np.int32], threshold=0.3) -> List[int]:
+    def detect_peaks(self, curvature: NDArray[np.float64], contour: NDArray[np.int32], threshold=0.5) -> List[int]:
         """
         使用阈值检测曲率峰值来提取拐点，同时合并同一个峰的多个点，添加首尾点
 
@@ -255,10 +269,12 @@ if __name__ == "__main__":
     from Viewer import MaskViewer
 
     map = Map()
-    map.rover_move(Pose2D(40, 40, 0.3))
     map.rover_move(Pose2D(29, 29, 0.5))
+    map.rover_move(Pose2D(23, 25, 3))
+    # map.rover_move(Pose2D(25, 29, 0.1))
+    map.rover_move(Pose2D(26, 29, 3))
     map.rover_move(Pose2D(20, 20, 3))
     map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
-    map.get_contours(map.boundary)
+    map.get_contours(map.mask)
     viewer = MaskViewer(map)
     viewer.show_mask()

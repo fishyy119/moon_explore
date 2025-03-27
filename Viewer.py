@@ -14,19 +14,27 @@ class MaskViewer:
 
     def show_mask(self) -> None:
         fig, ax = plt.subplots()
-        # im = ax.imshow(self.map.mask, cmap="gray_r", origin="lower")
+        im = ax.imshow(self.map.mask, cmap="gray_r", origin="lower")
         boundary_points = np.argwhere(self.map.boundary)
-        ax.scatter(
-            boundary_points[:, 1], boundary_points[:, 0], color="cyan", s=5, label="Boundary Points"
-        )  # 画出边界点
+        # ax.scatter(
+        #     boundary_points[:, 1], boundary_points[:, 0], color="cyan", s=5, label="Boundary Points"
+        # )  # 画出边界点
+
+        ob_points = np.argwhere(self.map.obstacle_mask)
+        ax.scatter(ob_points[:, 1], ob_points[:, 0], color="cyan", s=5, label="Boundary Points")  # 障碍点
 
         contours = self.map.contours
 
         for contour in contours:
             curvature = self.map.curvature_discrete(contour)
             peaks_idx = self.map.detect_peaks(curvature, contour)
-            ax.scatter(contour[:, 0], contour[:, 1], color="red", s=5, label="Boundary Points")  # 画出边界点
-            ax.scatter(contour[peaks_idx, 0], contour[peaks_idx, 1], color="blue", marker="*", s=50, label="Peaks")
+            ax.scatter(contour[:, 1], contour[:, 0], color="red", s=5, label="Boundary Points")  # 画出边界点
+            ax.scatter(
+                contour[0, 1], contour[0, 0], color="red", marker="*", s=150, label="Boundary Points"
+            )  # 画出头部
+            # for i, (x, y) in enumerate(contour):
+            #     ax.text(x, y, str(i), color="red", fontsize=8, ha="center", va="center")
+            ax.scatter(contour[peaks_idx, 1], contour[peaks_idx, 0], color="blue", marker="*", s=50, label="Peaks")
             # contour = loess_smooth(contour)
             # curvature = self.map.compute_curvature(contour)  # 计算曲率
             plt.figure(figsize=(8, 5))
