@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.signal import argrelextrema
 from scipy.ndimage import binary_erosion, binary_dilation
-import cv2
 import skimage
 from Pose2D import Pose2D
 
@@ -11,7 +10,6 @@ from numpy.typing import NDArray
 
 class Map:
     MAP_SCALE = 10  # 浮点数坐标乘以这个数便对应到索引坐标
-    SECTOR_SCALE = 3  # 扇形遮罩计算所用的栅格在地图基础上的进一步细分
     MAX_RANGE = 6.0  # 最远可视距离，米
     FOV = 90  # 视场角，度数
 
@@ -143,7 +141,8 @@ class Map:
 
     def rover_move(self, pose: Pose2D) -> None:
         self.rover_pose = pose
-        self.mask |= self.generate_sector_mask(pose)
+        new_mask = self.generate_sector_mask(pose)
+        self.mask |= new_mask
 
     def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
         """提取网格地图的边界点"""
@@ -168,6 +167,7 @@ class Map:
                 # 舍弃太短的结果，对于各种操作都不方便
                 continue
             # contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
+            contour = contour[:, ::-1]  # skimage返回的结果是(row,col)形式的，为了后面用的方便，交换一下
             self.contours.append(contour)
         return self.contours
 
@@ -206,7 +206,7 @@ class Map:
             ds = segment_lengths
 
         # 计算曲率 κ = θ / ds
-        curvatures = np.abs(theta) / ds  # 目前不太关心弯曲的方向
+        curvatures = theta / ds
 
         return curvatures
 
@@ -223,6 +223,7 @@ class Map:
             List[int]: 拐点在contour上对应的索引
         """
         # 1. 先找到所有局部极大值
+        curvature = np.abs(curvature)  # 曲率是有正负的，这里只关心大小
         local_maxima = argrelextrema(curvature, np.greater_equal, order=1)[0]
 
         # 2. 过滤掉低于阈值的峰值
@@ -254,16 +255,51 @@ class Map:
 
         new_peaks = [peak + 2 for peak in new_peaks]  # 曲率没求边缘点，为了和contour中对齐，手动加2
 
-        # 4. 添加首点和尾点，如果首尾点接近则去除一个
-        first_point = contour[0]
-        last_point = contour[-1]
-        if np.linalg.norm(first_point - last_point) <= 2:
-            new_peaks.insert(0, 0)
-        else:
-            new_peaks.append(len(contour) - 1)
-            new_peaks.insert(0, 0)
+        # 4. 添加首点和尾点
+        new_peaks.append(len(contour) - 1)
+        new_peaks.insert(0, 0)
+        # first_point = contour[0]
+        # last_point = contour[-1]
+        # if np.linalg.norm(first_point - last_point) <= 2:
+        #     new_peaks.insert(0, 0)
+        # else:
+        #     new_peaks.append(len(contour) - 1)
+        #     new_peaks.insert(0, 0)
 
         return new_peaks
+
+    def cal_canPose(self):
+        points: List[Pose2D] = []
+        for contour in self.contours:
+            curvature = self.curvature_discrete(contour)
+            # 前面生成这个的时候已经添加了首尾点
+            peaks_idx = np.array(self.detect_peaks(curvature, contour))
+
+            # 计算每段的中点索引
+            segment_lengths = peaks_idx[1:] - peaks_idx[:-1]  # 每段的长度
+            midpoints_idx = peaks_idx[:-1] + segment_lengths // 2  # 计算每段的中点索引
+
+            neighborhood_size = 5  # 邻域大小
+            half_size = neighborhood_size // 2
+
+            for mid in midpoints_idx:
+                x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
+                neighborhood = self.mask[y - half_size : y + half_size + 1, x - half_size : x + half_size + 1]
+
+                # 获取邻域内未知区域的坐标
+                unknown_points = np.array(np.where(neighborhood == False)).T  # 坐标是 (row, col)
+
+                # 计算未知区域的质心
+                centroid = np.mean(unknown_points, axis=0)
+                centroid = np.array([centroid[1] + (x - half_size), centroid[0] + (y - half_size)])
+
+                # 计算目标点到质心的向量
+                vector_to_centroid = centroid - np.array([x, y])
+                yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
+
+                points.append(Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw))
+
+        return points
 
 
 if __name__ == "__main__":
@@ -279,5 +315,7 @@ if __name__ == "__main__":
     map.get_contours(map.mask)
 
     viewer = MaskViewer(map)
-    viewer.plot_pose2d(Pose2D(23, 20, 0))
+    points = map.cal_canPose()
+    for point in points:
+        viewer.plot_pose2d(point)
     viewer.show()

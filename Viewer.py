@@ -26,7 +26,7 @@ class MaskViewer:
         map_matrix[self.map.obstacle_mask & self.map.mask] = 1  # 将障碍物区域设为1
 
         # 自定义颜色映射，-1为灰色，0为白色，1为黑色
-        cmap = mcolors.ListedColormap(["gray", "white", "red"])  # 只定义三种颜色
+        cmap = mcolors.ListedColormap(["lightgray", "white", "red"])  # 只定义三种颜色
         bounds = [-1.5, -0.5, 0.5, 1.5]  # 设置每个值的边界
         norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
@@ -38,9 +38,9 @@ class MaskViewer:
             curvature = self.map.curvature_discrete(contour)
             peaks_idx = self.map.detect_peaks(curvature, contour)
 
-            self.ax.scatter(contour[:, 1], contour[:, 0], color="red", s=5, label="Contours")
-            self.ax.scatter(contour[0, 1], contour[0, 0], color="yellow", marker="*", s=150, label="Start Point")
-            self.ax.scatter(contour[peaks_idx, 1], contour[peaks_idx, 0], color="blue", marker="*", s=50, label="Peaks")
+            self.ax.scatter(contour[:, 0], contour[:, 1], color="red", s=5, label="Contours")
+            self.ax.scatter(contour[0, 0], contour[0, 1], color="yellow", marker="*", s=150, label="Start Point")
+            self.ax.scatter(contour[peaks_idx, 0], contour[peaks_idx, 1], color="blue", marker="*", s=50, label="Peaks")
 
             if plot_curvature:
                 self.plot_curvature(curvature)
