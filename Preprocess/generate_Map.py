@@ -45,7 +45,7 @@ def calculate_slope_aspect(dem: NDArray) -> Tuple[NDArray, NDArray]:
     return slope, aspect
 
 
-def calculate_passability(slope: NDArray, passable_threshold: List[float] = [5, 10, 20]) -> NDArray:
+def calculate_passability(slope: NDArray, passable_threshold: List[float] = [5, 15, 20]) -> NDArray:
     """
     根据坡度计算可通行性，分四档
 
@@ -70,19 +70,24 @@ def main() -> None:
     input_file: str = str(NPY_ROOT / "map_truth.npy")
     slope_output_file: str = str(NPY_ROOT / "map_slope.npy")
     aspect_output_file: str = str(NPY_ROOT / "map_aspect.npy")
+    passable_output_file: str = str(NPY_ROOT / "map_passable.npy")
 
     # 加载DEM数据
     dem: NDArray = np.load(input_file)
 
     # 计算坡度和坡向
     slope, aspect = calculate_slope_aspect(dem)
+    passable = calculate_passability(slope)
+    passable = (passable >= 1.5).astype(np.bool_)
 
     # 保存结果
     np.save(slope_output_file, slope)
     np.save(aspect_output_file, aspect)
+    np.save(passable_output_file, passable)
 
     print(f"坡度图已保存到 {slope_output_file}")
     print(f"坡向图已保存到 {aspect_output_file}")
+    print("可通行性地图已保存到", passable_output_file)
 
 
 if __name__ == "__main__":

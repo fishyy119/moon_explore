@@ -15,7 +15,7 @@ class MaskViewer:
         self.map = map_instance
         self.fig, self.ax = plt.subplots()
 
-    def plot_mask(self):
+    def plot_mask(self, god=False):
         # 创建一个与mask相同大小的矩阵，并根据条件设置值
         map_matrix = np.full_like(self.map.mask, -1, dtype=int)  # 默认全部设为未知区域 (-1)
 
@@ -23,10 +23,13 @@ class MaskViewer:
         map_matrix[self.map.mask] = 0  # 将mask外的区域设为0（已知区域）
 
         # 障碍物区域 (1)
-        map_matrix[self.map.obstacle_mask & self.map.mask] = 1  # 将障碍物区域设为1
+        if god:
+            map_matrix[self.map.obstacle_mask] = 1  # 显示全部障碍
+        else:
+            map_matrix[self.map.obstacle_mask & self.map.mask] = 1  # 将障碍物区域设为1
 
         # 自定义颜色映射，-1为灰色，0为白色，1为黑色
-        cmap = mcolors.ListedColormap(["lightgray", "white", "red"])  # 只定义三种颜色
+        cmap = mcolors.ListedColormap(["lightgray", "white", "black"])  # 只定义三种颜色
         bounds = [-1.5, -0.5, 0.5, 1.5]  # 设置每个值的边界
         norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
@@ -87,7 +90,7 @@ class MaskViewer:
 
     def update(self):
         # self.ax.clear()
-        self.plot_mask()
+        self.plot_mask(god=True)
         # self.plot_obstacles()
         self.plot_contours(plot_curvature=False)
         self.ax.set_title("Sector Mask Viewer")

@@ -4,6 +4,7 @@ from scipy.ndimage import binary_erosion, binary_dilation
 import skimage
 from Pose2D import Pose2D
 
+from GLOABL import *
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
 
@@ -17,8 +18,9 @@ class Map:
         self.global_map: NDArray = ...
         self.visible_map: NDArray = ...
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
-        self.obstacle_mask = np.zeros((501, 501), dtype=np.bool_)
-        self.obstacle_mask[300:, 300:] = True
+        self.obstacle_mask: NDArray[np.bool_] = np.load(NPY_ROOT / "map_passable.npy")
+        # self.obstacle_mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
+        # self.obstacle_mask[300:, 300:] = True
         self.rover_pose = Pose2D(0, 0, 0)
 
     def cal_r_max(
@@ -230,41 +232,36 @@ class Map:
         peak_indices = [idx for idx in local_maxima if curvature[idx] > threshold]
 
         # 3. 处理平峰：查找平峰区间，并保留中间的点
-        diff = np.diff(peak_indices)
+
         new_peaks: List[int] = []
-        cnt = 0
-        start = peak_indices[0]
+        if len(peak_indices) > 0:
+            diff = np.diff(peak_indices)
+            cnt = 0
+            start = peak_indices[0]
 
-        for i, d in enumerate(diff):
-            if d == 1:
-                cnt += 1  # 记录连续峰的数量
-                continue
-            else:
-                if cnt > 0:
-                    new_peaks.append((start + peak_indices[i]) // 2)  # 取中间点
+            for i, d in enumerate(diff):
+                if d == 1:
+                    cnt += 1  # 记录连续峰的数量
+                    continue
                 else:
-                    new_peaks.append(peak_indices[i])  # 记录单独的峰
-                start = peak_indices[i + 1]  # 更新新的起点
-                cnt = 0
+                    if cnt > 0:
+                        new_peaks.append((start + peak_indices[i]) // 2)  # 取中间点
+                    else:
+                        new_peaks.append(peak_indices[i])  # 记录单独的峰
+                    start = peak_indices[i + 1]  # 更新新的起点
+                    cnt = 0
 
-        # 处理最后一段
-        if cnt > 0:
-            new_peaks.append((start + peak_indices[-1]) // 2)
-        else:
-            new_peaks.append(peak_indices[-1])
+            # 处理最后一段
+            if cnt > 0:
+                new_peaks.append((start + peak_indices[-1]) // 2)
+            else:
+                new_peaks.append(peak_indices[-1])
 
-        new_peaks = [peak + 2 for peak in new_peaks]  # 曲率没求边缘点，为了和contour中对齐，手动加2
+            new_peaks = [peak + 2 for peak in new_peaks]  # 曲率没求边缘点，为了和contour中对齐，手动加2
 
         # 4. 添加首点和尾点
         new_peaks.append(len(contour) - 1)
         new_peaks.insert(0, 0)
-        # first_point = contour[0]
-        # last_point = contour[-1]
-        # if np.linalg.norm(first_point - last_point) <= 2:
-        #     new_peaks.insert(0, 0)
-        # else:
-        #     new_peaks.append(len(contour) - 1)
-        #     new_peaks.insert(0, 0)
 
         return new_peaks
 
@@ -306,10 +303,10 @@ if __name__ == "__main__":
     from Viewer import MaskViewer
 
     map = Map()
-    map.rover_move(Pose2D(29, 29, 0.5))
-    map.rover_move(Pose2D(23, 25, 3))
+    # map.rover_move(Pose2D(29, 29, 0.5))
+    # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
-    map.rover_move(Pose2D(26, 29, 3))
+    # map.rover_move(Pose2D(26, 29, 3))
     map.rover_move(Pose2D(20, 20, 3))
     map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
     map.get_contours(map.mask)

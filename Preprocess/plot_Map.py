@@ -58,7 +58,7 @@ def plot_passability(passability: NDArray, passable_threshold: List[float] = [5,
     bounds = [0, 0.5, 1.5, 2.5, 3.5]
     norm = plt.cm.colors.BoundaryNorm(bounds, cmap.N)  # type: ignore
 
-    ax2.imshow(passability, cmap=cmap, norm=norm)
+    ax2.imshow(passability, cmap=cmap, norm=norm, origin="lower")
     ax2.set_title("Passability (Slope)")
 
     # 创建图例
@@ -81,7 +81,7 @@ def main() -> None:
     aspect_map: NDArray = np.load(NPY_ROOT / "map_aspect.npy")
 
     # plot_maps(dem, slope_map, aspect_map)
-    CAL_AND_PLOT_PASSABILITY(slope_map, [5, 10, 20])
+    CAL_AND_PLOT_PASSABILITY(slope_map, [5, 15, 20])
 
 
 if __name__ == "__main__":
