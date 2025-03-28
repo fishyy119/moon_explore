@@ -14,7 +14,7 @@ class Map:
     MAX_RANGE = 6.0  # 最远可视距离，米
     FOV = 90  # 视场角，度数
 
-    def __init__(self) -> None:
+    def __init__(self, god=False) -> None:
         self.global_map: NDArray = ...
         self.visible_map: NDArray = ...
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
@@ -22,6 +22,9 @@ class Map:
         # self.obstacle_mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         # self.obstacle_mask[300:, 300:] = True
         self.rover_pose = Pose2D(0, 0, 0)
+        self.contours: List[NDArray[np.int32]] = []
+        if god:
+            self.mask = np.ones_like(self.mask, dtype=np.bool_)
 
     def cal_r_max(
         self,

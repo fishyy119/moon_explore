@@ -48,6 +48,10 @@ class MaskViewer:
             if plot_curvature:
                 self.plot_curvature(curvature)
 
+    def plot_path(self, path: NDArray[np.int32]):
+        self.ax.plot(path[:, 0], path[:, 1], color="green", linewidth=2, label="Path")
+        # self.ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
+
     def plot_curvature(self, curvature):
         plt.figure(figsize=(8, 5))
         plt.plot(curvature, color="red", linewidth=2)
@@ -97,7 +101,6 @@ class MaskViewer:
         self.fig.canvas.draw()
 
     def show(self):
-        self.update()
         plt.show()
 
     def show_anime(self) -> None:
