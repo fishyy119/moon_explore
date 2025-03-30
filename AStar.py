@@ -11,10 +11,10 @@ See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
 
 import math
 import numpy as np
-import matplotlib.pyplot as plt
+from scipy.ndimage import distance_transform_edt
 
 from Map import Map
-from typing import Dict, List, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Callable
 from numpy.typing import NDArray
 
 
@@ -31,8 +31,14 @@ class AStarPlanner:
         self.rr = rr
         self.min_x, self.min_y = 0, 0
         self.max_x, self.max_y = 500, 500
-        self.obstacle_map: NDArray[np.bool_] = map.obstacle_mask | ~map.mask  # TODO: 膨胀obmask
-        self.x_width, self.y_width = self.obstacle_map.shape
+        visible_ob = map.obstacle_mask & map.mask
+
+        # 计算距离场，算出来两个不同安全度的膨胀
+        distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
+        self.euclidean_dilated_base = distance_map <= rr * Map.MAP_SCALE * 1.5
+        self.euclidean_dilated_safe = distance_map <= rr * Map.MAP_SCALE * 2.0
+
+        self.x_width, self.y_width = distance_map.shape
         self.motion = self.get_motion_model()
 
     class Node:
@@ -48,20 +54,27 @@ class AStarPlanner:
         def __repr__(self):
             return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
 
-    def planning(self, sx, sy, gx, gy) -> NDArray[np.int32]:
+    def planning(self, sx: float, sy: float, gx: float, gy: float) -> Optional[NDArray[np.int32]]:
         """
-        A star path search
+        二阶段A*路径规划
 
-        input:
-            s_x: start x position [m]
-            s_y: start y position [m]
-            gx: goal x position [m]
-            gy: goal y position [m]
+        Args:
+            sx (float): start x position [m]
+            sy (float): start y position [m]
+            gx (float): goal x position [m]
+            gy (float): goal y position [m]
 
-        output:
-            rx: x position list of the final path
-            ry: y position list of the final path
+        Returns:
+            Optional[NDArray[np.int32]]: (N, 2) 存储路径上的各点坐标
         """
+        self.obstacle_map: NDArray[np.bool_] = self.euclidean_dilated_safe | ~self.map.mask
+        result = self.plan_once(sx, sy, gx, gy)
+        if result is None:
+            self.obstacle_map = self.euclidean_dilated_base | ~self.map.mask
+            result = self.plan_once(sx, sy, gx, gy)
+        return self.simplify_path(result)
+
+    def plan_once(self, sx, sy, gx, gy) -> Optional[NDArray[np.int32]]:
         start_node = self.Node(self.calc_xy_index(sx), self.calc_xy_index(sy), 0.0, -1)
         goal_node = self.Node(self.calc_xy_index(gx), self.calc_xy_index(gy), 0.0, -1)
 
@@ -71,8 +84,7 @@ class AStarPlanner:
 
         while True:
             if len(open_set) == 0:
-                print("Open set is empty..")
-                break
+                return None
 
             c_id = min(open_set, key=lambda o: open_set[o].cost + self.calc_heuristic(goal_node, open_set[o]))
             current = open_set[c_id]
@@ -111,6 +123,37 @@ class AStarPlanner:
 
         path = self.calc_final_path(goal_node, closed_set)
 
+        return path
+
+    @staticmethod
+    def line_of_sight(grid, p1, p2):
+        """检查p1到p2之间是否有障碍物"""
+        x1, y1 = p1
+        x2, y2 = p2
+        points = np.linspace((x1, y1), (x2, y2), num=100)  # 采样100个点
+        return all(grid[round(y), round(x)] == 0 for x, y in points)  # 确保中间点无障碍物
+
+    def simplify_once(self, path):
+        """单次三角剪枝"""
+        simplified = [path[0]]  # 起点
+        last = 0
+
+        for i in range(1, len(path)):
+            if not self.line_of_sight(self.obstacle_map, path[last], path[i]):
+                simplified.append(path[i - 1])
+                last = i - 1
+
+        simplified.append(path[-1])  # 终点
+        return np.array(simplified)
+
+    def simplify_path(self, path):
+        """三角剪枝，移除不必要的拐点直至收敛"""
+        length_last = len(path) + 1
+        cnt = 0
+        while length_last != len(path) and cnt <= 5:
+            length_last = len(path)
+            path = self.simplify_once(path)
+            cnt += 1
         return path
 
     def calc_final_path(self, goal_node: Node, closed_set: Dict[int, Node]) -> NDArray[np.int32]:
@@ -167,7 +210,7 @@ class AStarPlanner:
             return False
 
         # collision check
-        if self.obstacle_map[node.y, node.x]:
+        if self.obstacle_map[int(node.y), int(node.x)]:
             return False
 
         return True
@@ -193,13 +236,15 @@ def main():
     from Viewer import MaskViewer
 
     map = Map(god=True)
-
     planner = AStarPlanner(0.8, map)
-    Path = planner.planning(2, 2, 8, 12)
+    path = planner.planning(2, 2, 8, 12)
 
     viewer = MaskViewer(map)
     viewer.update()
-    viewer.plot_path(Path)
+    if path is None:
+        print("Cannot find path")
+        return
+    viewer.plot_path(path)
     viewer.show()
 
 
