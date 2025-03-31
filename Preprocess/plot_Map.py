@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from generate_Map import calculate_passability
 
-from GLOABL import *
+from webots_ros_ws.src.moon_explore.GLOBAL import *
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
 

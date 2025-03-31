@@ -1,6 +1,6 @@
 import numpy as np
+from pathlib import Path
 
-from GLOABL import *
 from typing import Tuple, List
 from numpy.typing import NDArray
 
@@ -67,6 +67,7 @@ def main() -> None:
     """
     主函数，读取DEM文件，计算坡度和坡向，并保存结果
     """
+    NPY_ROOT = Path(__file__).parent.parent / "resource"
     input_file: str = str(NPY_ROOT / "map_truth.npy")
     slope_output_file: str = str(NPY_ROOT / "map_slope.npy")
     aspect_output_file: str = str(NPY_ROOT / "map_aspect.npy")
@@ -83,7 +84,7 @@ def main() -> None:
     # 保存结果
     np.save(slope_output_file, slope)
     np.save(aspect_output_file, aspect)
-    np.save(passable_output_file, passable)
+    np.save(passable_output_file, passable.T)
 
     print(f"坡度图已保存到 {slope_output_file}")
     print(f"坡向图已保存到 {aspect_output_file}")

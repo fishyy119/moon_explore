@@ -2,7 +2,7 @@ import numpy as np
 from skimage.measure import block_reduce
 from plot_Map import CAL_AND_PLOT_PASSABILITY
 
-from GLOABL import *
+from webots_ros_ws.src.moon_explore.GLOBAL import *
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
 

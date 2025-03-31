@@ -28,6 +28,8 @@ class Pose2D:
         """
         从 ROS Pose 消息创建 Pose2D 实例
         这里不处理 Pose 消息的实例，因此参数是提取后的
+        坐标系是slam的图像坐标系：右下前
+        要先转换回前左上
 
         Args:
             ROS 2 中的 geometry_msgs.msg.Pose 消息中的必要参数
@@ -35,7 +37,10 @@ class Pose2D:
         Returns:
             Pose2D: 生成的二维位姿
         """
-        yaw = Rotation.from_quat([qx, qy, qz, qw]).as_euler("xyz")[2]
+        R_ = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])  # webots中相机系：前左上；图像的坐标系：右下前
+        camera_rotation = np.dot(Rotation.from_quat([qx, qy, qz, qw]).as_matrix(), R_.T)
+        yaw = Rotation.from_matrix(camera_rotation).as_euler("xyz")[2]
+        # yaw = Rotation.from_quat([qx, qy, qz, qw]).as_euler("xyz")[2]
         return cls(x, y, yaw)
 
     @property
@@ -99,3 +104,6 @@ class Pose2D:
     def yaw_deg360(self) -> float:
         """返回 [0, 360) 的角度值"""
         return math.degrees(self._yaw) % 360
+
+    def __str__(self):
+        return f"{self.x}, {self.y}, {self.yaw_deg360}"

@@ -3,8 +3,13 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 import matplotlib.colors as mcolors
 import matplotlib.animation as animation
-from Pose2D import Pose2D
-from Map import Map
+
+try:
+    from .Pose2D import Pose2D
+    from .Map import Map
+except:
+    from Pose2D import Pose2D
+    from Map import Map
 
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
@@ -29,7 +34,7 @@ class MaskViewer:
             map_matrix[self.map.obstacle_mask & self.map.mask] = 1  # 将障碍物区域设为1
 
         # 自定义颜色映射，-1为灰色，0为白色，1为黑色
-        cmap = mcolors.ListedColormap(["lightgray", "white", "black"])  # 只定义三种颜色
+        cmap = mcolors.ListedColormap(["gray", "white", "black"])  # 只定义三种颜色
         bounds = [-1.5, -0.5, 0.5, 1.5]  # 设置每个值的边界
         norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
@@ -37,6 +42,7 @@ class MaskViewer:
         self.ax.imshow(map_matrix, cmap=cmap, norm=norm, origin="lower")
 
     def plot_contours(self, plot_curvature=False):
+        self.ax.clear()
         for contour in self.map.contours:
             curvature = self.map.curvature_discrete(contour)
             peaks_idx = self.map.detect_peaks(curvature, contour)
@@ -49,7 +55,7 @@ class MaskViewer:
                 self.plot_curvature(curvature)
 
     def plot_path(self, path: NDArray[np.int32]):
-        self.ax.plot(path[:, 0], path[:, 1], color="green", linewidth=2, label="Path")
+        self.ax.plot(path[:, 0] * 10, path[:, 1] * 10, color="green", linewidth=2, label="Path")
         # self.ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
 
     def plot_curvature(self, curvature):
@@ -94,14 +100,16 @@ class MaskViewer:
 
     def update(self):
         # self.ax.clear()
-        self.plot_mask(god=True)
-        # self.plot_obstacles()
-        self.plot_contours(plot_curvature=False)
+        # self.plot_contours(plot_curvature=False)
+        self.plot_mask()
         self.ax.set_title("Sector Mask Viewer")
         self.fig.canvas.draw()
 
     def show(self):
-        plt.show()
+        # plt.show()
+        self.ax.set_xlim(0, 500)
+        self.ax.set_ylim(0, 500)
+        plt.pause(0.001)
 
     def show_anime(self) -> None:
         self.fig, self.ax = plt.subplots()

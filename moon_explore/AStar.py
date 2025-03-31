@@ -12,8 +12,12 @@ See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
 import math
 import numpy as np
 from scipy.ndimage import distance_transform_edt
+from pathlib import Path
 
-from Map import Map
+try:
+    from .Map import Map
+except:
+    from Map import Map
 from typing import Dict, List, Optional, Tuple, Callable
 from numpy.typing import NDArray
 
@@ -35,6 +39,7 @@ class AStarPlanner:
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
+        self.euclidean_dilated_least = distance_map <= rr * Map.MAP_SCALE * 1.0
         self.euclidean_dilated_base = distance_map <= rr * Map.MAP_SCALE * 1.5
         self.euclidean_dilated_safe = distance_map <= rr * Map.MAP_SCALE * 2.0
 
@@ -72,9 +77,20 @@ class AStarPlanner:
         if result is None:
             self.obstacle_map = self.euclidean_dilated_base | ~self.map.mask
             result = self.plan_once(sx, sy, gx, gy)
-        return self.simplify_path(result)
+        if result is not None:
+            return self.simplify_path(result)
+        else:
+            return None
 
     def plan_once(self, sx, sy, gx, gy) -> Optional[NDArray[np.int32]]:
+        # sx_idx, sy_idx = self.calc_xy_index(sx), self.calc_xy_index(sy)
+
+        # y_min = max(sy_idx - 10, 0)
+        # y_max = min(sy_idx + 10, self.obstacle_map.shape[0])
+        # x_min = max(sx_idx - 10, 0)
+        # x_max = min(sx_idx + 10, self.obstacle_map.shape[1])
+        # self.obstacle_map[y_min:y_max, x_min:x_max] = False
+
         start_node = self.Node(self.calc_xy_index(sx), self.calc_xy_index(sy), 0.0, -1)
         goal_node = self.Node(self.calc_xy_index(gx), self.calc_xy_index(gy), 0.0, -1)
 
@@ -139,9 +155,10 @@ class AStarPlanner:
         last = 0
 
         for i in range(1, len(path)):
-            if not self.line_of_sight(self.obstacle_map, path[last], path[i]):
-                simplified.append(path[i - 1])
-                last = i - 1
+            if not self.line_of_sight(self.euclidean_dilated_least, path[last], path[i]):
+                if i != 1:
+                    simplified.append(path[i - 1])
+                    last = i - 1
 
         simplified.append(path[-1])  # 终点
         return np.array(simplified)
@@ -154,6 +171,9 @@ class AStarPlanner:
             length_last = len(path)
             path = self.simplify_once(path)
             cnt += 1
+
+        # 把单位从栅格坐标变换回m
+        path = path * self.resolution
         return path
 
     def calc_final_path(self, goal_node: Node, closed_set: Dict[int, Node]) -> NDArray[np.int32]:
@@ -234,10 +254,12 @@ class AStarPlanner:
 
 def main():
     from Viewer import MaskViewer
+    import matplotlib.pyplot as plt
 
-    map = Map(god=True)
+    NPY_ROOT = Path(__file__).parent.parent / "resource"
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), god=True)
     planner = AStarPlanner(0.8, map)
-    path = planner.planning(2, 2, 8, 12)
+    path = planner.planning(27, 25.25, 29.3, 29.7)
 
     viewer = MaskViewer(map)
     viewer.update()
@@ -246,6 +268,7 @@ def main():
         return
     viewer.plot_path(path)
     viewer.show()
+    plt.show()
 
 
 if __name__ == "__main__":

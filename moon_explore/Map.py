@@ -2,9 +2,13 @@ import numpy as np
 from scipy.signal import argrelextrema
 from scipy.ndimage import binary_erosion, binary_dilation
 import skimage
-from Pose2D import Pose2D
+from pathlib import Path
 
-from GLOABL import *
+try:
+    from .Pose2D import Pose2D
+except:
+    from Pose2D import Pose2D
+
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
 
@@ -14,11 +18,11 @@ class Map:
     MAX_RANGE = 6.0  # 最远可视距离，米
     FOV = 90  # 视场角，度数
 
-    def __init__(self, god=False) -> None:
+    def __init__(self, map_file, god=False) -> None:
         self.global_map: NDArray = ...
         self.visible_map: NDArray = ...
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
-        self.obstacle_mask: NDArray[np.bool_] = np.load(NPY_ROOT / "map_passable.npy")
+        self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
         # self.obstacle_mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         # self.obstacle_mask[300:, 300:] = True
         self.rover_pose = Pose2D(0, 0, 0)
@@ -157,9 +161,10 @@ class Map:
         self.boundary = boundary
         return boundary
 
-    def get_contours(self, boundary: NDArray[np.bool_]) -> List[NDArray[np.int32]]:
+    def get_contours(self) -> List[NDArray[np.int32]]:
         """提取连续曲线轮廓，这里传参还是不要传边界点，直接传可视范围就好"""
-        binary_mask = boundary.astype(np.uint8) * 255
+        # binary_mask = boundary.astype(np.uint8) * 255
+        binary_mask = self.mask.astype(np.uint8) * 255
         # cv2方法和ski方法都只能提闭合轮廓，如果传边界点的话，独立线段会提出双层结果
         # 但是ski方法找到了一个mask参数来进一步处理提取结果，这样就可以把障碍信息传进去，最后效果就是提出了闭合轮廓舍弃障碍的部分
         # contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -168,7 +173,7 @@ class Map:
         )  # 这里的level，取1则提取到外侧一圈，取254则提取到内侧点上，128则是交界处
         self.contours: List[NDArray[np.int32]] = []
         for contour in contours:
-            if len(contour) < 10:
+            if len(contour) < 20:
                 # 舍弃太短的结果，对于各种操作都不方便
                 continue
             # contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
@@ -268,8 +273,8 @@ class Map:
 
         return new_peaks
 
-    def cal_canPose(self):
-        points: List[Pose2D] = []
+    def cal_canPose(self) -> List[Pose2D]:
+        points: List[Tuple[Pose2D, int]] = []  # 第二个值记录了这段的长度，对于较长的平滑边缘给予较高的评分
         for contour in self.contours:
             curvature = self.curvature_discrete(contour)
             # 前面生成这个的时候已经添加了首尾点
@@ -282,8 +287,15 @@ class Map:
             neighborhood_size = 5  # 邻域大小
             half_size = neighborhood_size // 2
 
-            for mid in midpoints_idx:
+            for seg_idx, mid in enumerate(midpoints_idx):
+                if segment_lengths[seg_idx] < 10:
+                    continue  # * 拒绝很短的空间内出现的多个点
+
                 x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
+
+                # if x <= 20 or x >= 480 or y <= 20 or y >= 480:
+                #     continue  # * 拒绝靠近地图边缘的点  通过在跟踪路径时不跟踪最后3m来实现
+
                 neighborhood = self.mask[y - half_size : y + half_size + 1, x - half_size : x + half_size + 1]
 
                 # 获取邻域内未知区域的坐标
@@ -297,25 +309,63 @@ class Map:
                 vector_to_centroid = centroid - np.array([x, y])
                 yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
 
-                points.append(Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw))
+                points.append(
+                    (
+                        Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw),
+                        segment_lengths[seg_idx],
+                    )
+                )
 
-        return points
+            # 对每个点调用评价函数并排序
+            points.sort(key=self.evaluate_candidate_points, reverse=True)
+
+        return [point[0] for point in points]
+
+    def evaluate_candidate_points(self, point: Tuple[Pose2D, int]) -> float:
+
+        # x, y = int(point.x * Map.MAP_SCALE), int(point.y * Map.MAP_SCALE)
+
+        # # 计算邻域内未知区域的数量
+        # neighborhood_size = 10  # 邻域大小
+        # half_size = neighborhood_size // 2
+        # neighborhood = self.mask[
+        #     max(0, y - half_size) : min(self.mask.shape[0], y + half_size + 1),
+        #     max(0, x - half_size) : min(self.mask.shape[1], x + half_size + 1),
+        # ]
+        # unknown_area_score = np.sum(neighborhood == False)
+
+        # # 计算与障碍物的距离
+        # obstacle_distance = np.min(
+        #     np.sqrt((np.where(self.obstacle_mask)[0] - y) ** 2 + (np.where(self.obstacle_mask)[1] - x) ** 2)
+        # )
+        # obstacle_distance_score = obstacle_distance
+
+        # # 综合评分（可以根据需求调整权重）
+        # score = unknown_area_score + 0.5 * obstacle_distance_score
+
+        score = point[1]
+        #  - abs(point[0].yaw_deg180 - self.rover_pose.yaw_deg180)
+
+        return score
 
 
 if __name__ == "__main__":
     from Viewer import MaskViewer
+    import matplotlib.pyplot as plt
 
-    map = Map()
+    NPY_ROOT = Path(__file__).parent.parent / "resource"
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"))
     # map.rover_move(Pose2D(29, 29, 0.5))
     # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
-    # map.rover_move(Pose2D(26, 29, 3))
+    map.rover_move(Pose2D(26, 29, 3))
     map.rover_move(Pose2D(20, 20, 3))
-    map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
-    map.get_contours(map.mask)
+    # map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
+    map.get_contours()
 
     viewer = MaskViewer(map)
     points = map.cal_canPose()
-    for point in points:
-        viewer.plot_pose2d(point)
-    viewer.show()
+    # for point in points:
+    #     viewer.plot_pose2d(point)
+    viewer.update()
+    plt.show()
