@@ -39,8 +39,8 @@ class AStarPlanner:
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
-        self.euclidean_dilated_least = distance_map <= rr * Map.MAP_SCALE * 1.0
-        self.euclidean_dilated_base = distance_map <= rr * Map.MAP_SCALE * 1.5
+        self.euclidean_dilated_least = distance_map <= rr * Map.MAP_SCALE * 1.0  # 最小的膨胀，剪枝时使用这个
+        self.euclidean_dilated_base = distance_map <= rr * Map.MAP_SCALE * 1.5  # 这两个用于规划
         self.euclidean_dilated_safe = distance_map <= rr * Map.MAP_SCALE * 2.0
 
         self.x_width, self.y_width = distance_map.shape
@@ -163,7 +163,7 @@ class AStarPlanner:
         simplified.append(path[-1])  # 终点
         return np.array(simplified)
 
-    def simplify_path(self, path):
+    def simplify_path(self, path: NDArray[np.int32]):
         """三角剪枝，移除不必要的拐点直至收敛"""
         length_last = len(path) + 1
         cnt = 0
@@ -173,7 +173,7 @@ class AStarPlanner:
             cnt += 1
 
         # 把单位从栅格坐标变换回m
-        path = path * self.resolution
+        path = (path * self.resolution).astype(np.int32)
         return path
 
     def calc_final_path(self, goal_node: Node, closed_set: Dict[int, Node]) -> NDArray[np.int32]:

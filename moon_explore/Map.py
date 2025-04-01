@@ -19,12 +19,10 @@ class Map:
     FOV = 90  # 视场角，度数
 
     def __init__(self, map_file, god=False) -> None:
-        self.global_map: NDArray = ...
-        self.visible_map: NDArray = ...
+        # self.global_map: NDArray = ...
+        # self.visible_map: NDArray = ...
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
-        # self.obstacle_mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
-        # self.obstacle_mask[300:, 300:] = True
         self.rover_pose = Pose2D(0, 0, 0)
         self.contours: List[NDArray[np.int32]] = []
         if god:
@@ -32,6 +30,7 @@ class Map:
 
     def cal_r_max(
         self,
+        pose: Pose2D,
         theta_max: NDArray[np.float64],
         theta_min: NDArray[np.float64],
         target_yaw: float,
@@ -48,6 +47,7 @@ class Map:
         （不过调成400就可以模拟360度全覆盖了）
 
         Args:
+            pose (Pose2D): 用于精简计算用到的障碍物，只计算周围的
             theta_max (NDArray[np.float64]): 每个格子对应一个角度范围，这是最大值
             theta_min (NDArray[np.float64]): 每个格子对应一个角度范围，这是最小值
             target_yaw (float): 巡视器的目标朝向，在其左右根据FOV扩展
@@ -74,12 +74,27 @@ class Map:
 
         r_max[(range_min <= theta_min) & (theta_max <= range_max)] = Map.MAX_RANGE * Map.MAP_SCALE
 
-        # 提取障碍物的角度范围和距离
-        ob_r = r[self.obstacle_mask]
-        ob_theta_max = theta_max[self.obstacle_mask]
-        ob_theta_min = theta_min[self.obstacle_mask]
+        # 提取障碍物的角度范围和距离，只提取附近可能用得到的障碍物，减小计算量
+        H, W = self.mask.shape
+        grid_x, grid_y = np.meshgrid(np.arange(H), np.arange(W))
+        ob_grid_x = grid_x[self.obstacle_mask]
+        ob_grid_y = grid_y[self.obstacle_mask]
+
+        # 计算障碍物是否在 (pos_x, pos_y) 附近的 120x120 区域内
+        local_mask = (
+            (ob_grid_x >= (pose.x - Map.MAX_RANGE) * Map.MAP_SCALE)
+            & (ob_grid_x <= (pose.x + Map.MAX_RANGE) * Map.MAP_SCALE)
+            & (ob_grid_y >= (pose.y - Map.MAX_RANGE) * Map.MAP_SCALE)
+            & (ob_grid_y <= (pose.y + Map.MAX_RANGE) * Map.MAP_SCALE)
+        )
+
+        # 仅保留该区域内的障碍物数据
+        ob_r = r[self.obstacle_mask][local_mask]
+        ob_theta_max = theta_max[self.obstacle_mask][local_mask]
+        ob_theta_min = theta_min[self.obstacle_mask][local_mask]
 
         # **先对障碍物按角度排序**
+        #! 大改之后貌似没用到这个排序的特性了
         sort_idx = np.argsort(ob_theta_min)
         ob_theta_min_sorted = ob_theta_min[sort_idx]
         ob_theta_max_sorted = ob_theta_max[sort_idx]
@@ -94,14 +109,11 @@ class Map:
         theta_min_sorted = theta_min_flat[theta_sort_idx]
         theta_max_sorted = theta_max_flat[theta_sort_idx]
 
-        # **利用 `searchsorted` 找到受影响的索引范围**
-        #! 我总感觉这里的最大值排序寻找end_idx是不太对的，但是目前还没出大问题
-        start_idx = np.searchsorted(theta_min_sorted, ob_theta_min_sorted, side="left")
-        end_idx = np.searchsorted(theta_max_sorted, ob_theta_max_sorted, side="right")
-
         # **批量更新 r_max**
         for i in range(len(ob_r_sorted)):
-            affected_indices = theta_sort_idx[start_idx[i] : end_idx[i]]
+            affected_indices = theta_sort_idx[
+                (theta_min_sorted < ob_theta_max_sorted[i]) & (theta_max_sorted > ob_theta_min_sorted[i])
+            ]
             np.minimum.at(r_max_flat, affected_indices, ob_r_sorted[i])
 
         return r_max
@@ -113,8 +125,8 @@ class Map:
             return np.zeros_like(self.mask, dtype=np.bool_)
 
         # 创建坐标网格
-        shape, shape = self.mask.shape
-        x, y = np.meshgrid(np.arange(shape), np.arange(shape))
+        H, W = self.mask.shape
+        x, y = np.meshgrid(np.arange(H), np.arange(W))
         dx = x - pose.x * Map.MAP_SCALE
         dy = y - pose.y * Map.MAP_SCALE
 
@@ -130,7 +142,7 @@ class Map:
         theta_max: NDArray[np.float64] = np.maximum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
         theta_min: NDArray[np.float64] = np.minimum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
 
-        r_max1 = self.cal_r_max(theta_max, theta_min, pose.yaw_deg180, r)
+        r_max1 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg180, r)
 
         # 将角度范围变换到0~360，再运算一次，两者取并集
         theta_max_t = (theta_max + 360) % 360
@@ -138,14 +150,14 @@ class Map:
         # 新范围下原边界点处大小出现错乱
         theta_max = np.maximum(theta_max_t, theta_min_t)
         theta_min = np.minimum(theta_max_t, theta_min_t)
-        r_max2 = self.cal_r_max(theta_max, theta_min, pose.yaw_deg360, r, deg_type=360)
+        r_max2 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg360, r, deg_type=360)
 
         r_max = np.maximum(r_max1, r_max2)
 
         # 按照矩阵的样式，维度0对应y，维度1对应x
         # 这里理论上应该是<=，但是前面r_max计算索引的地方恐怕有问题，出此下策先用<判断再膨胀一下
-        mask = r < r_max
-        return binary_dilation(mask).astype(np.bool_)
+        mask = r <= r_max
+        # return binary_dilation(mask).astype(np.bool_)
         return mask
 
     def rover_move(self, pose: Pose2D) -> None:
@@ -154,7 +166,7 @@ class Map:
         self.mask |= new_mask
 
     def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
-        """提取网格地图的边界点"""
+        """提取网格地图的边界点，这个没用到"""
         eroded = binary_erosion(mask).astype(np.bool_)
         boundary = mask & ~eroded
         boundary = boundary & ~self.obstacle_mask
@@ -351,8 +363,10 @@ class Map:
 
 if __name__ == "__main__":
     from Viewer import MaskViewer
+    import time
     import matplotlib.pyplot as plt
 
+    start_time = time.time()
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"))
     # map.rover_move(Pose2D(29, 29, 0.5))
@@ -365,7 +379,11 @@ if __name__ == "__main__":
 
     viewer = MaskViewer(map)
     points = map.cal_canPose()
-    # for point in points:
-    #     viewer.plot_pose2d(point)
+    for point in points:
+        viewer.plot_pose2d(point)
+    viewer.plot_contours(plot_curvature=True)
     viewer.update()
     plt.show()
+
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time:.2f} seconds")
