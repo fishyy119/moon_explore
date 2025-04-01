@@ -3,6 +3,13 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from numpy.typing import NDArray
+from typing import NamedTuple
+from collections import namedtuple
+
+
+class PoseDiff(NamedTuple):
+    dist: float  # 欧氏距离
+    yaw_diff_deg: float  # 偏航角差绝对值(角度)
 
 
 class Pose2D:
@@ -42,6 +49,12 @@ class Pose2D:
         yaw = Rotation.from_matrix(camera_rotation).as_euler("xyz")[2]
         # yaw = Rotation.from_quat([qx, qy, qz, qw]).as_euler("xyz")[2]
         return cls(x, y, yaw)
+
+    def __sub__(self, other: "Pose2D") -> PoseDiff:
+        distance = math.sqrt((other._x - self._x) ** 2 + (other._y - self._y) ** 2)
+        diff_abs = math.fabs(self.yaw_deg360 - self.yaw_deg360)
+        yaw_diff = min([diff_abs, 360 - diff_abs])
+        return PoseDiff(dist=distance, yaw_diff_deg=yaw_diff)
 
     @property
     def t(self) -> NDArray[np.float64]:

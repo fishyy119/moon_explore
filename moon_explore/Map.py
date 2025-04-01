@@ -2,15 +2,21 @@ import numpy as np
 from scipy.signal import argrelextrema
 from scipy.ndimage import binary_erosion, binary_dilation
 import skimage
+import math
 from pathlib import Path
 
 try:
-    from .Pose2D import Pose2D
+    from .Pose2D import Pose2D, PoseDiff
 except:
-    from Pose2D import Pose2D
+    from Pose2D import Pose2D, PoseDiff
 
-from typing import Tuple, List, Callable
+from typing import Tuple, List, Callable, NamedTuple
 from numpy.typing import NDArray
+
+
+class CandidatePoint(NamedTuple):
+    pose: Pose2D  # 候选的目标位姿
+    length: int  # 对应弧段的长度
 
 
 class Map:
@@ -155,14 +161,21 @@ class Map:
         r_max = np.maximum(r_max1, r_max2)
 
         # 按照矩阵的样式，维度0对应y，维度1对应x
-        # 这里理论上应该是<=，但是前面r_max计算索引的地方恐怕有问题，出此下策先用<判断再膨胀一下
         mask = r <= r_max
-        # return binary_dilation(mask).astype(np.bool_)
         return mask
 
     def rover_move(self, pose: Pose2D) -> None:
         self.rover_pose = pose
         new_mask = self.generate_sector_mask(pose)
+        self.mask |= new_mask
+
+    def rover_init(self, pose: Pose2D) -> None:
+        """与`rover_move`类似，不过这个假设巡视器在最初位置原地转一圈，所以画360度的图"""
+        self.rover_pose = pose
+        original_FOV = Map.FOV
+        Map.FOV = 500
+        new_mask = self.generate_sector_mask(pose)
+        Map.FOV = original_FOV
         self.mask |= new_mask
 
     def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
@@ -286,7 +299,7 @@ class Map:
         return new_peaks
 
     def cal_canPose(self) -> List[Pose2D]:
-        points: List[Tuple[Pose2D, int]] = []  # 第二个值记录了这段的长度，对于较长的平滑边缘给予较高的评分
+        points: List[CandidatePoint] = []  # 第二个值记录了这段的长度，对于较长的平滑边缘给予较高的评分
         for contour in self.contours:
             curvature = self.curvature_discrete(contour)
             # 前面生成这个的时候已经添加了首尾点
@@ -305,9 +318,6 @@ class Map:
 
                 x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
 
-                # if x <= 20 or x >= 480 or y <= 20 or y >= 480:
-                #     continue  # * 拒绝靠近地图边缘的点  通过在跟踪路径时不跟踪最后3m来实现
-
                 neighborhood = self.mask[y - half_size : y + half_size + 1, x - half_size : x + half_size + 1]
 
                 # 获取邻域内未知区域的坐标
@@ -322,7 +332,7 @@ class Map:
                 yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
 
                 points.append(
-                    (
+                    CandidatePoint(
                         Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw),
                         segment_lengths[seg_idx],
                     )
@@ -333,7 +343,13 @@ class Map:
 
         return [point[0] for point in points]
 
-    def evaluate_candidate_points(self, point: Tuple[Pose2D, int]) -> float:
+    def evaluate_candidate_points(self, point: CandidatePoint) -> float:
+        diff: PoseDiff = self.rover_pose - point.pose
+
+        if diff.dist <= 7 and diff.yaw_diff_deg >= 50:
+            score = 0
+        else:
+            score = point.length + math.exp(-math.fabs(diff.dist - 7)) * 30
 
         # x, y = int(point.x * Map.MAP_SCALE), int(point.y * Map.MAP_SCALE)
 
@@ -355,9 +371,6 @@ class Map:
         # # 综合评分（可以根据需求调整权重）
         # score = unknown_area_score + 0.5 * obstacle_distance_score
 
-        score = point[1]
-        #  - abs(point[0].yaw_deg180 - self.rover_pose.yaw_deg180)
-
         return score
 
 
@@ -374,6 +387,10 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(25, 29, 0.1))
     map.rover_move(Pose2D(26, 29, 3))
     map.rover_move(Pose2D(20, 20, 3))
+
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time:.2f} seconds")
+
     # map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
     map.get_contours()
 
@@ -384,6 +401,3 @@ if __name__ == "__main__":
     viewer.plot_contours(plot_curvature=True)
     viewer.update()
     plt.show()
-
-    end_time = time.time()
-    print(f"Execution time: {end_time - start_time:.2f} seconds")
