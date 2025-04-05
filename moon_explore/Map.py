@@ -316,6 +316,8 @@ class Map:
                 if segment_lengths[seg_idx] < 10:
                     continue  # * 拒绝很短的空间内出现的多个点
 
+                # TODO: 长度超出阈值的边缘分成两段（但是长度记录分裂前的）
+
                 x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
 
                 neighborhood = self.mask[y - half_size : y + half_size + 1, x - half_size : x + half_size + 1]
@@ -385,8 +387,8 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(29, 29, 0.5))
     # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
-    map.rover_move(Pose2D(26, 29, 3))
-    map.rover_move(Pose2D(20, 20, 3))
+    map.rover_init(Pose2D(26, 29, 3))
+    # map.rover_move(Pose2D(20, 20, 3))
 
     end_time = time.time()
     print(f"Execution time: {end_time - start_time:.2f} seconds")
@@ -395,9 +397,9 @@ if __name__ == "__main__":
     map.get_contours()
 
     viewer = MaskViewer(map)
+    viewer.plot_contours(plot_curvature=False)
     points = map.cal_canPose()
     for point in points:
         viewer.plot_pose2d(point)
-    viewer.plot_contours(plot_curvature=True)
     viewer.update()
     plt.show()

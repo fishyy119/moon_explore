@@ -47,8 +47,8 @@ class MaskViewer:
             curvature = self.map.curvature_discrete(contour)
             peaks_idx = self.map.detect_peaks(curvature, contour)
 
-            self.ax.scatter(contour[:, 0], contour[:, 1], color="red", s=5, label="Contours")
-            self.ax.scatter(contour[0, 0], contour[0, 1], color="yellow", marker="*", s=150, label="Start Point")
+            self.ax.scatter(contour[:, 0], contour[:, 1], color="orange", s=5, label="Contours")
+            # self.ax.scatter(contour[0, 0], contour[0, 1], color="yellow", marker="*", s=150, label="Start Point")
             self.ax.scatter(contour[peaks_idx, 0], contour[peaks_idx, 1], color="blue", marker="*", s=50, label="Peaks")
 
             if plot_curvature:
@@ -71,8 +71,8 @@ class MaskViewer:
         yaw = pose.yaw_rad
         x = pose.x * Map.MAP_SCALE
         y = pose.y * Map.MAP_SCALE
-        arrow_length = 10
-        arrow_width = 10
+        arrow_length = 4
+        arrow_width = 4
         dx = np.cos(yaw) * arrow_length
         dy = np.sin(yaw) * arrow_length
 
@@ -93,9 +93,7 @@ class MaskViewer:
         )
 
         # 使用 Polygon 绘制箭头
-        arrow_patch = Polygon(
-            arrow_points, closed=True, facecolor="orange", edgecolor="orange", label="Pose2D", zorder=5
-        )
+        arrow_patch = Polygon(arrow_points, closed=True, facecolor="red", edgecolor="black", label="Pose2D", zorder=5)
         self.ax.add_patch(arrow_patch)
 
     def update(self):

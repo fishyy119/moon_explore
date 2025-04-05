@@ -149,13 +149,15 @@ class AStarPlanner:
         points = np.linspace((x1, y1), (x2, y2), num=100)  # 采样100个点
         return all(grid[round(y), round(x)] == 0 for x, y in points)  # 确保中间点无障碍物
 
-    def simplify_once(self, path):
+    def simplify_once(self, path, ref_ob=None):
         """单次三角剪枝"""
+        if ref_ob is None:  # 给画图程序留的接口
+            ref_ob = self.euclidean_dilated_least
+
         simplified = [path[0]]  # 起点
         last = 0
-
         for i in range(1, len(path)):
-            if not self.line_of_sight(self.euclidean_dilated_least, path[last], path[i]):
+            if not self.line_of_sight(ref_ob, path[last], path[i]):
                 if i != 1:
                     simplified.append(path[i - 1])
                     last = i - 1

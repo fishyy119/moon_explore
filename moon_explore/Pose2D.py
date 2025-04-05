@@ -4,7 +4,6 @@ from scipy.spatial.transform import Rotation
 
 from numpy.typing import NDArray
 from typing import NamedTuple
-from collections import namedtuple
 
 
 class PoseDiff(NamedTuple):

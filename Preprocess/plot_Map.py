@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from generate_Map import calculate_passability
+from pathlib import Path
 
-from webots_ros_ws.src.moon_explore.GLOBAL import *
 from typing import Tuple, List, Callable
 from numpy.typing import NDArray
 
@@ -59,7 +59,7 @@ def plot_passability(passability: NDArray, passable_threshold: List[float] = [5,
     norm = plt.cm.colors.BoundaryNorm(bounds, cmap.N)  # type: ignore
 
     ax2.imshow(passability, cmap=cmap, norm=norm, origin="lower")
-    ax2.set_title("Passability (Slope)")
+    # ax2.set_title("Passability (Slope)")
 
     # 创建图例
     legend_labels = [
@@ -69,19 +69,24 @@ def plot_passability(passability: NDArray, passable_threshold: List[float] = [5,
         f">{passable_threshold[2]}°",
     ]
     legend_patches = [Patch(color=color, label=label) for color, label in zip(color_list, legend_labels)]
-    ax2.legend(handles=legend_patches, loc="upper right", title="Slope Categories")
+    legend = ax2.legend(handles=legend_patches, loc="upper right", title="Slope Categories")
+
+    legend.get_frame().set_facecolor("white")
+    legend.get_frame().set_alpha(1.0)
+    legend.get_frame().set_edgecolor("black")
 
     plt.tight_layout()
     plt.show()
 
 
 def main() -> None:
+    NPY_ROOT = Path(__file__).parent.parent / "resource"
     dem: NDArray = np.load(NPY_ROOT / "map_truth.npy")
     slope_map: NDArray = np.load(NPY_ROOT / "map_slope.npy")
     aspect_map: NDArray = np.load(NPY_ROOT / "map_aspect.npy")
 
     # plot_maps(dem, slope_map, aspect_map)
-    CAL_AND_PLOT_PASSABILITY(slope_map, [5, 15, 20])
+    CAL_AND_PLOT_PASSABILITY(slope_map.T, [5, 15, 20])
 
 
 if __name__ == "__main__":
