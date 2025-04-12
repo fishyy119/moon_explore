@@ -1,8 +1,7 @@
 import numpy as np
-from scipy.signal import argrelextrema
-from scipy.ndimage import binary_erosion, binary_dilation
 import skimage
 import math
+from scipy.signal import argrelextrema
 from pathlib import Path
 
 try:
@@ -19,18 +18,22 @@ class CandidatePoint(NamedTuple):
     length: int  # 对应弧段的长度
 
 
+class Contour(NamedTuple):
+    points: NDArray[np.int32]  # 轮廓点（他的类型好像也是float）
+    curvature: NDArray[np.float64]  # 曲率
+    peaks_idx: List[int]  # 拐点索引
+
+
 class Map:
     MAP_SCALE = 10  # 浮点数坐标乘以这个数便对应到索引坐标
     MAX_RANGE = 6.0  # 最远可视距离，米
     FOV = 90  # 视场角，度数
 
     def __init__(self, map_file, god=False) -> None:
-        # self.global_map: NDArray = ...
-        # self.visible_map: NDArray = ...
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
         self.rover_pose = Pose2D(0, 0, 0)
-        self.contours: List[NDArray[np.int32]] = []
+        self.contours: List[Contour] = []
         if god:
             self.mask = np.ones_like(self.mask, dtype=np.bool_)
 
@@ -178,14 +181,6 @@ class Map:
         Map.FOV = original_FOV
         self.mask |= new_mask
 
-    def extract_grid_boundary(self, mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
-        """提取网格地图的边界点，这个没用到"""
-        eroded = binary_erosion(mask).astype(np.bool_)
-        boundary = mask & ~eroded
-        boundary = boundary & ~self.obstacle_mask
-        self.boundary = boundary
-        return boundary
-
     def get_contours(self) -> List[NDArray[np.int32]]:
         """提取连续曲线轮廓，这里传参还是不要传边界点，直接传可视范围就好"""
         # binary_mask = boundary.astype(np.uint8) * 255
@@ -196,17 +191,18 @@ class Map:
         contours = skimage.measure.find_contours(
             binary_mask, level=254, fully_connected="high", positive_orientation="high", mask=~self.obstacle_mask
         )  # 这里的level，取1则提取到外侧一圈，取254则提取到内侧点上，128则是交界处
-        self.contours: List[NDArray[np.int32]] = []
+        result: List[NDArray[np.int32]] = []  #! 应该并不是int32，不过无伤大雅
         for contour in contours:
             if len(contour) < 20:
                 # 舍弃太短的结果，对于各种操作都不方便
                 continue
             # contour = contour[:, 0, :].astype(np.int32)  # OpenCV 返回的是 (N, 1, 2) 需要展平
             contour = contour[:, ::-1]  # skimage返回的结果是(row,col)形式的，为了后面用的方便，交换一下
-            self.contours.append(contour)
-        return self.contours
+            result.append(contour)
+        return result
 
-    def curvature_discrete(self, points: NDArray[np.int32]) -> NDArray[np.float64]:
+    @staticmethod
+    def curvature_discrete(points: NDArray[np.int32]) -> NDArray[np.float64]:
         """
         以5个点的移动窗口，计算各点离散曲率
 
@@ -242,10 +238,10 @@ class Map:
 
         # 计算曲率 κ = θ / ds
         curvatures = theta / ds
-
         return curvatures
 
-    def detect_peaks(self, curvature: NDArray[np.float64], contour: NDArray[np.int32], threshold=0.5) -> List[int]:
+    @staticmethod
+    def detect_peaks(curvature: NDArray[np.float64], contour: NDArray[np.int32], threshold=0.5) -> List[int]:
         """
         使用阈值检测曲率峰值来提取拐点，同时合并同一个峰的多个点，添加首尾点
 
@@ -300,10 +296,8 @@ class Map:
 
     def cal_canPose(self) -> List[Pose2D]:
         points: List[CandidatePoint] = []  # 第二个值记录了这段的长度，对于较长的平滑边缘给予较高的评分
-        for contour in self.contours:
-            curvature = self.curvature_discrete(contour)
-            # 前面生成这个的时候已经添加了首尾点
-            peaks_idx = np.array(self.detect_peaks(curvature, contour))
+        for contour, _, peaks_idx in self.contours:
+            peaks_idx = np.array(peaks_idx)
 
             # 计算每段的中点索引
             segment_lengths = peaks_idx[1:] - peaks_idx[:-1]  # 每段的长度
@@ -375,6 +369,15 @@ class Map:
 
         return score
 
+    def step(self) -> None:
+        self.contours: List[Contour] = []
+        for contour in self.get_contours():
+            curvature = self.curvature_discrete(contour)
+            peaks_idx = self.detect_peaks(curvature, contour)
+            self.contours.append(Contour(contour, curvature, peaks_idx))
+
+        self.canPoses = self.cal_canPose()
+
 
 if __name__ == "__main__":
     from Viewer import MaskViewer
@@ -389,17 +392,12 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(25, 29, 0.1))
     map.rover_init(Pose2D(26, 29, 3))
     # map.rover_move(Pose2D(20, 20, 3))
-
-    end_time = time.time()
-    print(f"Execution time: {end_time - start_time:.2f} seconds")
-
-    # map.extract_grid_boundary(map.mask)  # 这步的作用存疑(可能在刨除障碍物边界时有作用)
-    map.get_contours()
+    print(f"Execution time: {time.time() - start_time:.2f} seconds")
+    map.step()
 
     viewer = MaskViewer(map)
-    viewer.plot_contours(plot_curvature=False)
-    points = map.cal_canPose()
-    for point in points:
-        viewer.plot_pose2d(point)
     viewer.update()
+    viewer.update(mode=viewer.UpdateMode.CONTOUR)
+
+    plt.ioff()
     plt.show()

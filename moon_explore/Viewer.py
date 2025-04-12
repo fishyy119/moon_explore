@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
 import matplotlib.colors as mcolors
-import matplotlib.animation as animation
+from matplotlib.patches import Polygon
+from matplotlib.text import Annotation
 
 try:
     from .Pose2D import Pose2D
@@ -12,13 +12,21 @@ except:
     from Map import Map
 
 from typing import Tuple, List, Callable
+from enum import Enum, auto
 from numpy.typing import NDArray
 
 
 class MaskViewer:
+    class UpdateMode(Enum):
+        MOVE = auto()
+        CONTOUR = auto()
+
     def __init__(self, map_instance: Map):
+        plt.ion()
         self.map = map_instance
         self.fig, self.ax = plt.subplots()
+        self.ax.set_xlim(0, 500)
+        self.ax.set_ylim(0, 500)
 
     def plot_mask(self, god=False):
         # 创建一个与mask相同大小的矩阵，并根据条件设置值
@@ -33,32 +41,51 @@ class MaskViewer:
         else:
             map_matrix[self.map.obstacle_mask & self.map.mask] = 1  # 将障碍物区域设为1
 
-        # 自定义颜色映射，-1为灰色，0为白色，1为黑色
-        cmap = mcolors.ListedColormap(["gray", "white", "black"])  # 只定义三种颜色
-        bounds = [-1.5, -0.5, 0.5, 1.5]  # 设置每个值的边界
-        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+        # 设置颜色映射
+        if not hasattr(self, "_mask_cmap"):
+            # 自定义颜色映射，-1为灰色，0为白色，1为黑色
+            self._mask_cmap = mcolors.ListedColormap(["gray", "none", "black"])
+            self._mask_bounds = [-1.5, -0.5, 0.5, 1.5]  # 设置每个值的边界
+            self._mask_norm = mcolors.BoundaryNorm(self._mask_bounds, self._mask_cmap.N)
 
-        # 使用imshow绘制
-        self.ax.imshow(map_matrix, cmap=cmap, norm=norm, origin="lower")
+        # 只创建一次 imshow，后续直接更新数据
+        if not hasattr(self, "_mask_image"):
+            self._mask_image = self.ax.imshow(map_matrix, cmap=self._mask_cmap, norm=self._mask_norm, origin="lower")
+        else:
+            self._mask_image.set_data(map_matrix)
 
-    def plot_contours(self, plot_curvature=False):
-        self.ax.clear()
-        for contour in self.map.contours:
-            curvature = self.map.curvature_discrete(contour)
-            peaks_idx = self.map.detect_peaks(curvature, contour)
+    def plot_contours(self, plot_curvature=False, show_peak=True):
+        # 清除旧的 scatter 对象
+        if hasattr(self, "_contour_scatters"):
+            for artist in self._contour_scatters + self._peak_scatters:
+                artist.remove()
+        self._contour_scatters = []
+        self._peak_scatters = []
 
-            self.ax.scatter(contour[:, 0], contour[:, 1], color="orange", s=5, label="Contours")
-            # self.ax.scatter(contour[0, 0], contour[0, 1], color="yellow", marker="*", s=150, label="Start Point")
-            self.ax.scatter(contour[peaks_idx, 0], contour[peaks_idx, 1], color="blue", marker="*", s=50, label="Peaks")
+        for contour, curvature, peaks_idx in self.map.contours:
+            scatter = self.ax.scatter(contour[:, 0], contour[:, 1], color="orange", s=5)
+            self._contour_scatters.append(scatter)
 
+            if show_peak:
+                peak_scatter = self.ax.scatter(
+                    contour[peaks_idx, 0], contour[peaks_idx, 1], color="blue", marker="*", s=50
+                )
+                self._peak_scatters.append(peak_scatter)
             if plot_curvature:
                 self.plot_curvature(curvature)
 
-    def plot_path(self, path: NDArray[np.int32]):
-        self.ax.plot(path[:, 0] * 10, path[:, 1] * 10, color="green", linewidth=2, label="Path")
-        # self.ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
+    def plot_path(self, path: NDArray[np.int32], **kwargs):
+        if not hasattr(self, "_path_line"):
+            kwargs.setdefault("color", "green")
+            kwargs.setdefault("linewidth", 2)
+            kwargs.setdefault("label", "Path")
+            self._path_line = self.ax.plot(path[:, 0], path[:, 1], color="green", linewidth=2, label="Path")[0]
+        else:
+            self._path_line.set_data(path[:, 0], path[:, 1])
+        # .ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
 
-    def plot_curvature(self, curvature):
+    @staticmethod
+    def plot_curvature(curvature):
         plt.figure(figsize=(8, 5))
         plt.plot(curvature, color="red", linewidth=2)
         plt.title("Curvature vs Point Position on Contour")
@@ -66,13 +93,37 @@ class MaskViewer:
         plt.ylabel("Curvature")
         plt.grid(True)
 
-    def plot_pose2d(self, pose: Pose2D) -> None:
-        # 计算箭头的四个点
-        yaw = pose.yaw_rad
+    def plot_pose2d(self, pose: Pose2D, color: str = "red", scale: int = 20) -> Annotation:
         x = pose.x * Map.MAP_SCALE
         y = pose.y * Map.MAP_SCALE
-        arrow_length = 4
-        arrow_width = 4
+        yaw = pose.yaw_rad
+
+        # 为了让线段变得不显眼
+        dx = np.cos(yaw) * 0.001
+        dy = np.sin(yaw) * 0.001
+        arrow = self.ax.annotate(
+            text="",
+            xy=(x + dx, y + dy),  # 箭头指向方向
+            xytext=(x, y),  # 箭头起点
+            arrowprops=dict(
+                arrowstyle="fancy",
+                color=color,
+                mutation_scale=scale,
+                shrinkA=0,
+                shrinkB=0,
+            ),
+            zorder=5,
+        )
+        return arrow
+
+    def _old_plot_pose2d(self, pose: Pose2D, color: str = "red"):
+        """旧版的绘制方法，问题在于不会自动缩放，不用了但是不想扔"""
+        # 这个手动创建的多边形，不会自动缩放
+        x = pose.x * Map.MAP_SCALE
+        y = pose.y * Map.MAP_SCALE
+        yaw = pose.yaw_rad
+        arrow_length = 10
+        arrow_width = 10
         dx = np.cos(yaw) * arrow_length
         dy = np.sin(yaw) * arrow_length
 
@@ -93,35 +144,33 @@ class MaskViewer:
         )
 
         # 使用 Polygon 绘制箭头
-        arrow_patch = Polygon(arrow_points, closed=True, facecolor="red", edgecolor="black", label="Pose2D", zorder=5)
+        arrow_patch = Polygon(arrow_points, closed=True, facecolor=color, edgecolor="black", zorder=5)
         self.ax.add_patch(arrow_patch)
 
-    def update(self):
-        # self.ax.clear()
-        # self.plot_contours(plot_curvature=False)
-        self.plot_mask()
-        self.ax.set_title("Sector Mask Viewer")
-        self.fig.canvas.draw()
+    def update(self, mode: UpdateMode = UpdateMode.MOVE):
+        if mode == MaskViewer.UpdateMode.MOVE:
+            self.plot_mask()
+
+            # 当前巡视器的箭头(多巡视器扩展不完全)
+            if hasattr(self, "_pose2d_arrows_rover"):
+                for arrow in self._pose2d_arrows_rover:
+                    arrow.remove()  # 移除之前绘制的箭头
+            self._pose2d_arrows_rover = []  # 清空记录
+            arrow = self.plot_pose2d(self.map.rover_pose, color="magenta", scale=20)
+            self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
+        elif mode == MaskViewer.UpdateMode.CONTOUR:
+            self.plot_mask()
+            self.plot_contours(plot_curvature=False)
+
+            # 候选点的箭头
+            if hasattr(self, "_pose2d_arrows_canPose"):
+                for arrow in self._pose2d_arrows_canPose:
+                    arrow.remove()  # 移除之前绘制的箭头
+            self._pose2d_arrows_canPose = []  # 清空记录
+            for point in self.map.canPoses:
+                arrow = self.plot_pose2d(point, color="red", scale=20)
+                self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
 
     def show(self):
-        # plt.show()
-        self.ax.set_xlim(0, 500)
-        self.ax.set_ylim(0, 500)
-        plt.pause(0.001)
-
-    def show_anime(self) -> None:
-        self.fig, self.ax = plt.subplots()
-
-        # 初始化掩码显示
-        self.im = self.ax.imshow(self.map.mask, cmap="gray_r", origin="lower", animated=True)
-        self.ax.set_title("Sector Mask Viewer")
-        self.fig.colorbar(self.im, ax=self.ax)
-
-        # 设置 30Hz 更新频率
-        self.ani = animation.FuncAnimation(self.fig, self.update_a, interval=33.3, blit=True, cache_frame_data=False)
-        plt.show()
-
-    def update_a(self, _):
-        """每帧更新 `map.mask` 可视化"""
-        self.im.set_data(self.map.mask)  # 直接读取 map.mask
-        return (self.im,)  # `blit=True` 需要返回可更新的对象
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
