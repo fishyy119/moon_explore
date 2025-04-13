@@ -5,17 +5,24 @@ from scipy.signal import argrelextrema
 from pathlib import Path
 
 try:
-    from .Pose2D import Pose2D, PoseDiff
+    from .Pose2D import Pose2D
+    from .AStar import AStarPlanner
 except:
-    from Pose2D import Pose2D, PoseDiff
+    from Pose2D import Pose2D
+    from AStar import AStarPlanner
 
-from typing import Tuple, List, Callable, NamedTuple
+from typing import Optional, Tuple, List, Callable, NamedTuple
+from dataclasses import dataclass
 from numpy.typing import NDArray
 
 
-class CandidatePoint(NamedTuple):
+@dataclass
+class CandidatePoint:
     pose: Pose2D  # 候选的目标位姿
     length: int  # 对应弧段的长度
+    score: float  # 候选点的评分
+    path: Optional[NDArray[np.int32]] = None  # 规划的路径的坐标
+    path_score: float = 0
 
 
 class Contour(NamedTuple):
@@ -32,6 +39,7 @@ class Map:
     def __init__(self, map_file, god=False) -> None:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
+        self.planner = AStarPlanner(0.8, self.obstacle_mask, Map.MAP_SCALE)
         self.rover_pose = Pose2D(0, 0, 0)
         self.contours: List[Contour] = []
         if god:
@@ -54,6 +62,7 @@ class Map:
         在360的FOV下，对于正后方的一条线会有计算错误，这种整个环形全部可视的情况无法通过两次截断模拟出来
         两次计算的断点刚好在正后方，而对于覆盖的判断需要覆盖整个栅格，截断刚好漏掉这里的格子
         （不过调成400就可以模拟360度全覆盖了）
+        （补充，有些情况下调成900才没出问题，没细看）（在Pose2D(26, 29, 0.7)下测试）
 
         Args:
             pose (Pose2D): 用于精简计算用到的障碍物，只计算周围的
@@ -176,7 +185,7 @@ class Map:
         """与`rover_move`类似，不过这个假设巡视器在最初位置原地转一圈，所以画360度的图"""
         self.rover_pose = pose
         original_FOV = Map.FOV
-        Map.FOV = 500
+        Map.FOV = 900
         new_mask = self.generate_sector_mask(pose)
         Map.FOV = original_FOV
         self.mask |= new_mask
@@ -294,80 +303,91 @@ class Map:
 
         return new_peaks
 
-    def cal_canPose(self) -> List[Pose2D]:
-        points: List[CandidatePoint] = []  # 第二个值记录了这段的长度，对于较长的平滑边缘给予较高的评分
+    def cal_canPose(self) -> None:
+        self.canPoints: List[CandidatePoint] = []
         for contour, _, peaks_idx in self.contours:
-            peaks_idx = np.array(peaks_idx)
+            peaks_idx_np = np.array(peaks_idx)
+            segment_lengths = peaks_idx_np[1:] - peaks_idx_np[:-1]  # 每段的长度
+            seg_anchors = [(start, end) for start, end in zip(peaks_idx[:-1], peaks_idx[1:])]
+            # midpoints_idx = peaks_idx[:-1] + segment_lengths // 2  # 计算每段的中点索引
 
-            # 计算每段的中点索引
-            segment_lengths = peaks_idx[1:] - peaks_idx[:-1]  # 每段的长度
-            midpoints_idx = peaks_idx[:-1] + segment_lengths // 2  # 计算每段的中点索引
-
-            neighborhood_size = 5  # 邻域大小
-            half_size = neighborhood_size // 2
-
-            for seg_idx, mid in enumerate(midpoints_idx):
-                if segment_lengths[seg_idx] < 10:
+            for seg_idx, (start, end) in enumerate(seg_anchors):
+                seg_len = segment_lengths[seg_idx]
+                if seg_len < 10:
                     continue  # * 拒绝很短的空间内出现的多个点
 
-                # TODO: 长度超出阈值的边缘分成两段（但是长度记录分裂前的）
+                # 确定朝向的邻域大小
+                NEIGHBORHOOD_SIZE = 5  # 邻域大小
+                HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
 
-                x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
+                # 决定分裂成多少段（至少一段）HALF_NEIGHBOR
+                MAX_SEGMENT_LENGTH = 50
+                num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))
+                split_point_idxs = np.linspace(start, end, 2 * num_subsegments + 1, dtype=int)
+                mid_point_idxs = split_point_idxs[1::2]  # 取出split_points的偶数位（1开头）
 
-                neighborhood = self.mask[y - half_size : y + half_size + 1, x - half_size : x + half_size + 1]
+                for mid in mid_point_idxs:
+                    x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
+                    if (
+                        x - HALF_NEIGHBOR < 0
+                        or x + HALF_NEIGHBOR >= self.mask.shape[1]
+                        or y - HALF_NEIGHBOR < 0
+                        or y + HALF_NEIGHBOR >= self.mask.shape[0]
+                    ):
+                        continue  # 跳过边缘，避免越界
 
-                # 获取邻域内未知区域的坐标
-                unknown_points = np.array(np.where(neighborhood == False)).T  # 坐标是 (row, col)
+                    neighborhood = self.mask[
+                        y - HALF_NEIGHBOR : y + HALF_NEIGHBOR + 1, x - HALF_NEIGHBOR : x + HALF_NEIGHBOR + 1
+                    ]
 
-                # 计算未知区域的质心
-                centroid = np.mean(unknown_points, axis=0)
-                centroid = np.array([centroid[1] + (x - half_size), centroid[0] + (y - half_size)])
+                    # 获取邻域内未知区域的坐标
+                    unknown_points = np.array(np.where(neighborhood == False)).T  # 坐标是 (row, col)
 
-                # 计算目标点到质心的向量
-                vector_to_centroid = centroid - np.array([x, y])
-                yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
+                    # 计算未知区域的质心
+                    centroid = np.mean(unknown_points, axis=0)
+                    centroid = np.array([centroid[1] + (x - HALF_NEIGHBOR), centroid[0] + (y - HALF_NEIGHBOR)])
 
-                points.append(
-                    CandidatePoint(
-                        Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw),
-                        segment_lengths[seg_idx],
-                    )
-                )
+                    # 计算目标点到质心的向量
+                    vector_to_centroid = centroid - np.array([x, y])
+                    yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
+                    canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
 
-            # 对每个点调用评价函数并排序
-            points.sort(key=self.evaluate_candidate_points, reverse=True)
+                    self.canPoints.append(CandidatePoint(canPose, seg_len, 0))
+        self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
 
-        return [point[0] for point in points]
+        # 对每个点调用评价函数并排序
+        # points.sort(key=lambda x: x.score, reverse=True)
 
-    def evaluate_candidate_points(self, point: CandidatePoint) -> float:
-        diff: PoseDiff = self.rover_pose - point.pose
+        # return [point[0] for point in points]
 
-        if diff.dist <= 7 and diff.yaw_diff_deg >= 50:
-            score = 0
-        else:
-            score = point.length + math.exp(-math.fabs(diff.dist - 7)) * 30
+    def evaluate_candidate_points(self) -> None:
+        # * 1.先对所有候选点规划路径
+        for point in self.canPoints:
+            point.path = self.planner.planning(
+                self.rover_pose.x, self.rover_pose.y, point.pose.x, point.pose.y, self.mask
+            )
+        self.canPoints = [point for point in self.canPoints if point.path is not None]
 
-        # x, y = int(point.x * Map.MAP_SCALE), int(point.y * Map.MAP_SCALE)
+        # *2.根据规划的路径计算运动成本
+        for point in self.canPoints:
+            path = point.path  # (N,2)
+            assert path is not None
 
-        # # 计算邻域内未知区域的数量
-        # neighborhood_size = 10  # 邻域大小
-        # half_size = neighborhood_size // 2
-        # neighborhood = self.mask[
-        #     max(0, y - half_size) : min(self.mask.shape[0], y + half_size + 1),
-        #     max(0, x - half_size) : min(self.mask.shape[1], x + half_size + 1),
-        # ]
-        # unknown_area_score = np.sum(neighborhood == False)
+            x1, y1 = path[0, 0], path[0, 1]  # 起点坐标
+            cost = 0
+            pose1 = self.rover_pose
+            for i in range(1, path.shape[0]):
+                x2, y2 = path[i]
 
-        # # 计算与障碍物的距离
-        # obstacle_distance = np.min(
-        #     np.sqrt((np.where(self.obstacle_mask)[0] - y) ** 2 + (np.where(self.obstacle_mask)[1] - x) ** 2)
-        # )
-        # obstacle_distance_score = obstacle_distance
+                # 当前段目标点 yaw
+                yaw = np.arctan2(y2 - y1, x2 - x1)
+                pose2 = Pose2D(x2, y2, yaw)
 
-        # # 综合评分（可以根据需求调整权重）
-        # score = unknown_area_score + 0.5 * obstacle_distance_score
+                diff = pose1 - pose2
 
-        return score
+                time = diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
+                cost += time
+            point.path_score = cost
 
     def step(self) -> None:
         self.contours: List[Contour] = []
@@ -376,7 +396,7 @@ class Map:
             peaks_idx = self.detect_peaks(curvature, contour)
             self.contours.append(Contour(contour, curvature, peaks_idx))
 
-        self.canPoses = self.cal_canPose()
+        self.cal_canPose()
 
 
 if __name__ == "__main__":
@@ -390,7 +410,8 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(29, 29, 0.5))
     # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
-    map.rover_init(Pose2D(26, 29, 3))
+    map.rover_init(Pose2D(28, 26, 0.7))
+    # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
     map.step()

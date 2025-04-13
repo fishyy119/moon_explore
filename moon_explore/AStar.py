@@ -14,34 +14,30 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from pathlib import Path
 
-try:
-    from .Map import Map
-except:
-    from Map import Map
 from typing import Dict, List, Optional, Tuple, Callable
 from numpy.typing import NDArray
 
 
 class AStarPlanner:
-    def __init__(self, rr: float, map: Map):
+    def __init__(self, rr: float, obstacle_map: NDArray[np.bool_], MAP_SCALE: float) -> None:
         """
         Initialize grid map for a star planning
 
         rr: robot radius[m]
+        obstacle_map: obstacle map (0: free, 1: obstacle)
         """
 
-        self.map = map
-        self.resolution = 1 / Map.MAP_SCALE  # grid resolution [m]
+        self.resolution = 1 / MAP_SCALE  # grid resolution [m]
         self.rr = rr
         self.min_x, self.min_y = 0, 0
         self.max_x, self.max_y = 500, 500
-        visible_ob = map.obstacle_mask & map.mask
+        visible_ob = obstacle_map  # 仿真环境因为已知就提前算好了
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
-        self.euclidean_dilated_least = distance_map <= rr * Map.MAP_SCALE * 1.0  # 最小的膨胀，剪枝时使用这个
-        self.euclidean_dilated_base = distance_map <= rr * Map.MAP_SCALE * 1.5  # 这两个用于规划
-        self.euclidean_dilated_safe = distance_map <= rr * Map.MAP_SCALE * 2.0
+        self.euclidean_dilated_least = distance_map <= rr * MAP_SCALE * 1.0  # 最小的膨胀，剪枝时使用这个
+        self.euclidean_dilated_base = distance_map <= rr * MAP_SCALE * 1.5  # 这两个用于规划
+        self.euclidean_dilated_safe = distance_map <= rr * MAP_SCALE * 2.0
 
         self.x_width, self.y_width = distance_map.shape
         self.motion = self.get_motion_model()
@@ -59,7 +55,9 @@ class AStarPlanner:
         def __repr__(self):
             return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
 
-    def planning(self, sx: float, sy: float, gx: float, gy: float) -> Optional[NDArray[np.int32]]:
+    def planning(
+        self, sx: float, sy: float, gx: float, gy: float, mask: NDArray[np.bool_]
+    ) -> Optional[NDArray[np.int32]]:
         """
         二阶段A*路径规划
 
@@ -68,14 +66,15 @@ class AStarPlanner:
             sy (float): start y position [m]
             gx (float): goal x position [m]
             gy (float): goal y position [m]
+            mask (NDArray[np.bool_]): 地图掩码，True表示探明区域
 
         Returns:
             Optional[NDArray[np.int32]]: (N, 2) 存储路径上的各点坐标
         """
-        self.obstacle_map: NDArray[np.bool_] = self.euclidean_dilated_safe | ~self.map.mask
+        self.obstacle_map: NDArray[np.bool_] = self.euclidean_dilated_safe | ~mask
         result = self.plan_once(sx, sy, gx, gy)
         if result is None:
-            self.obstacle_map = self.euclidean_dilated_base | ~self.map.mask
+            self.obstacle_map = self.euclidean_dilated_base | ~mask
             result = self.plan_once(sx, sy, gx, gy)
         if result is not None:
             return self.simplify_path(result)
@@ -256,20 +255,27 @@ class AStarPlanner:
 
 def main():
     from Viewer import MaskViewer
+    from Map import Map
     import matplotlib.pyplot as plt
+    import time
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), god=True)
-    planner = AStarPlanner(0.8, map)
-    path = planner.planning(27, 25.25, 29.3, 29.7)
+    planner = AStarPlanner(0.8, map.obstacle_mask, Map.MAP_SCALE)
+    start = time.time()
+    path = planner.planning(2, 2, 12.5, 8, map.mask)
+    print(f"{time.time() - start:.4f} sec")
 
     viewer = MaskViewer(map)
     viewer.update()
     if path is None:
         print("Cannot find path")
         return
-    viewer.plot_path(path)
+    print(path)
+
     viewer.show()
+    viewer.plot_path(path)
+    plt.ioff()
     plt.show()
 
 

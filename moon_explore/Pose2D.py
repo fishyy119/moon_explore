@@ -9,6 +9,7 @@ from typing import NamedTuple
 class PoseDiff(NamedTuple):
     dist: float  # 欧氏距离
     yaw_diff_deg: float  # 偏航角差绝对值(角度)
+    yaw_diff_rad: float
 
 
 class Pose2D:
@@ -53,7 +54,7 @@ class Pose2D:
         distance = math.sqrt((other._x - self._x) ** 2 + (other._y - self._y) ** 2)
         diff_abs = math.fabs(self.yaw_deg360 - self.yaw_deg360)
         yaw_diff = min([diff_abs, 360 - diff_abs])
-        return PoseDiff(dist=distance, yaw_diff_deg=yaw_diff)
+        return PoseDiff(dist=distance, yaw_diff_deg=yaw_diff, yaw_diff_rad=yaw_diff * math.pi / 180)
 
     @property
     def t(self) -> NDArray[np.float64]:

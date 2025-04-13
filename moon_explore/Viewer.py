@@ -79,7 +79,9 @@ class MaskViewer:
             kwargs.setdefault("color", "green")
             kwargs.setdefault("linewidth", 2)
             kwargs.setdefault("label", "Path")
-            self._path_line = self.ax.plot(path[:, 0], path[:, 1], color="green", linewidth=2, label="Path")[0]
+            self._path_line = self.ax.plot(
+                path[:, 0] * Map.MAP_SCALE, path[:, 1] * Map.MAP_SCALE, color="green", linewidth=2, label="Path"
+            )[0]
         else:
             self._path_line.set_data(path[:, 0], path[:, 1])
         # .ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
@@ -93,7 +95,7 @@ class MaskViewer:
         plt.ylabel("Curvature")
         plt.grid(True)
 
-    def plot_pose2d(self, pose: Pose2D, color: str = "red", scale: int = 20) -> Annotation:
+    def plot_pose2d(self, pose: Pose2D, text="", color: str = "red", scale: int = 20) -> Annotation:
         x = pose.x * Map.MAP_SCALE
         y = pose.y * Map.MAP_SCALE
         yaw = pose.yaw_rad
@@ -102,7 +104,7 @@ class MaskViewer:
         dx = np.cos(yaw) * 0.001
         dy = np.sin(yaw) * 0.001
         arrow = self.ax.annotate(
-            text="",
+            text=text,
             xy=(x + dx, y + dy),  # 箭头指向方向
             xytext=(x, y),  # 箭头起点
             arrowprops=dict(
@@ -167,9 +169,11 @@ class MaskViewer:
                 for arrow in self._pose2d_arrows_canPose:
                     arrow.remove()  # 移除之前绘制的箭头
             self._pose2d_arrows_canPose = []  # 清空记录
-            for point in self.map.canPoses:
-                arrow = self.plot_pose2d(point, color="red", scale=20)
+            for point in self.map.canPoints:
+                arrow = self.plot_pose2d(point.pose, color="red", scale=20)
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
+
+        self.show()
 
     def show(self):
         self.fig.canvas.draw()
