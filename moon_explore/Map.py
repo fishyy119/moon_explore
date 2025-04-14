@@ -6,10 +6,10 @@ from pathlib import Path
 
 try:
     from .Pose2D import Pose2D
-    from .AStar import AStarPlanner
+    from .AStar import AStarPlanner, RoverPath
 except:
     from Pose2D import Pose2D
-    from AStar import AStarPlanner
+    from AStar import AStarPlanner, RoverPath
 
 from typing import Optional, Tuple, List, Callable, NamedTuple
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ from numpy.typing import NDArray
 class CandidatePoint:
     pose: Pose2D  # 候选的目标位姿
     seg_len: int  # 对应弧段的长度
-    path: Optional[NDArray[np.int32]] = None  # 规划的路径的坐标
+    path: Optional[RoverPath] = None  # 规划的路径的坐标
     path_cost: float = 0  # 运动成本
     score: float = 0  # 最终评分
 
@@ -304,6 +304,32 @@ class Map:
         return new_peaks
 
     def cal_canPose(self) -> None:
+        NEIGHBORHOOD_SIZE = 5  # 确定朝向的邻域大小
+        HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
+        MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）HALF_NEIGHBOR
+        NUM_POSE = 5  # 每个目标点生成几个包围的点
+
+        def generate_pose2D_backwark(pose: Pose2D, d: float) -> List[Pose2D]:
+            """
+            generate_pose2D_backwark _summary_
+
+            Args:
+                pose (Pose2D): 其xy是目标观测点的坐标，yaw指示了法向
+                d (float): 包围的距离
+
+            Returns:
+                List[Pose2D]: 在距离xy一定距离的地方，生成扇形包围的若干候选位姿
+            """
+            result: List[Pose2D] = []
+            for angle in np.linspace(-math.pi / 2, math.pi / 2, num=NUM_POSE):
+                dx = d * math.cos(pose.yaw_rad + angle)
+                dy = d * math.sin(pose.yaw_rad + angle)
+                # new_y = pose.y - dy
+                # new_yaw = np.arctan2(pose.y - new_y, pose.x -new_x)
+                new_pose = Pose2D(pose.x - dx, pose.y - dy, pose.yaw_rad + angle)
+                result.append(new_pose)
+            return result
+
         self.canPoints: List[CandidatePoint] = []
         for contour, _, peaks_idx in self.contours:
             peaks_idx_np = np.array(peaks_idx)
@@ -316,12 +342,6 @@ class Map:
                 if seg_len < 10:
                     continue  # * 拒绝很短的空间内出现的多个点
 
-                # 确定朝向的邻域大小
-                NEIGHBORHOOD_SIZE = 5  # 邻域大小
-                HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
-
-                # 决定分裂成多少段（至少一段）HALF_NEIGHBOR
-                MAX_SEGMENT_LENGTH = 50
                 num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))
                 split_point_idxs = np.linspace(start, end, 2 * num_subsegments + 1, dtype=int)
                 mid_point_idxs = split_point_idxs[1::2]  # 取出split_points的偶数位（1开头）
@@ -352,45 +372,41 @@ class Map:
                     yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
                     canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
 
-                    self.canPoints.append(CandidatePoint(canPose, seg_len**2))
+                    for p in generate_pose2D_backwark(canPose, 2):
+                        if self.mask[int(p.y * Map.MAP_SCALE), int(p.x * Map.MAP_SCALE)] == False:
+                            continue
+                        # TODO: 偏的朝向给较小的seglen
+                        self.canPoints.append(CandidatePoint(p, seg_len / num_subsegments + 3 * num_subsegments))
+
         self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
-
-        # 对每个点调用评价函数并排序
-        # points.sort(key=lambda x: x.score, reverse=True)
-
-        # return [point[0] for point in points]
+        self.canPoints.sort(key=lambda p: p.score, reverse=True)
 
     def evaluate_candidate_points(self) -> None:
         # * 1.先对所有候选点规划路径
         for point in self.canPoints:
-            point.path = self.planner.planning(
-                self.rover_pose.x, self.rover_pose.y, point.pose.x, point.pose.y, self.mask
-            )
+            point.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, point.pose, self.mask)
         self.canPoints = [point for point in self.canPoints if point.path is not None]
         if len(self.canPoints) == 0:
+            # TODO：这种情况可能是车走进了障碍物里？
             print("无法规划出路径")
             return
 
         # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
-            path = point.path  # (N,2)
-            assert path is not None
+            assert point.path is not None
+            path = point.path.path_pose
 
-            x1, y1 = path[0, 0], path[0, 1]  # 起点坐标
+            p_last = self.rover_pose
             cost = 0
-            pose1 = self.rover_pose
-            for i in range(1, path.shape[0]):
-                x2, y2 = path[i, 0], path[i, 1]
-                yaw = np.arctan2(y2 - y1, x2 - x1)
-                pose2 = Pose2D(x2, y2, yaw)
-                diff = pose1 - pose2
-                # 更新用于下次
-                pose1 = pose2
-                x1, y1 = x2, y2
+            for p in path:
+                diff = p - p_last
+                p_last = p
 
-                time = diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
+                time = 2 * diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
                 cost += time
-            point.path_cost = cost
+
+            point.path_cost = math.exp(-0.01 * cost)
+            # point.path_cost = cost
         path_costs = np.array([p.path_cost for p in self.canPoints])
         sum_path_cost = np.sum(path_costs)
         cv_path_cost = np.std(path_costs) / np.mean(path_costs)
@@ -401,11 +417,11 @@ class Map:
         cv_seg_len = np.std(seg_lens) / np.mean(seg_lens)
 
         # * 4.计算分数
-        T1 = 100
-        T2 = 100
-        score_segs = T1 * cv_seg_len * seg_lens / sum_seg_len
-        score_paths = T2 * cv_path_cost * path_costs / sum_path_cost
-        scores = score_segs - score_paths
+        T_SEG = 100
+        T_PATH = 100
+        score_segs = T_SEG * seg_lens / sum_seg_len
+        score_paths = T_PATH * path_costs
+        scores = score_segs + score_paths
 
         for point, score in zip(self.canPoints, scores):
             point.score = score

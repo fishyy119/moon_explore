@@ -52,7 +52,7 @@ class Pose2D:
 
     def __sub__(self, other: "Pose2D") -> PoseDiff:
         distance = math.sqrt((other._x - self._x) ** 2 + (other._y - self._y) ** 2)
-        diff_abs = math.fabs(self.yaw_deg360 - self.yaw_deg360)
+        diff_abs = math.fabs(self.yaw_deg360 - other.yaw_deg360)
         yaw_diff = min([diff_abs, 360 - diff_abs])
         return PoseDiff(dist=distance, yaw_diff_deg=yaw_diff, yaw_diff_rad=yaw_diff * math.pi / 180)
 
@@ -119,4 +119,7 @@ class Pose2D:
         return math.degrees(self._yaw) % 360
 
     def __str__(self):
-        return f"{self.x}, {self.y}, {self.yaw_deg360}"
+        return f"{self._x}, {self._y}, {self.yaw_deg360}"
+
+    def __repr__(self):
+        return f"{self._x}, {self._y}, {self.yaw_deg360}"

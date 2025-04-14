@@ -48,25 +48,6 @@ class ExploreController(Node):
         else:
             self.map.rover_move(self.pose_now)
         self.viewer.update()
-        self.viewer.show()
-
-    def plan(self):
-        if self.pose_now is None:
-            return
-        self.map.get_contours()
-        pose_targets = self.map.cal_canPose()
-        for pose in pose_targets:
-            planner = AStarPlanner(1.0, self.map)
-            self.get_logger().info(f"{self.pose_now.x}, {self.pose_now.y}, {pose.x}, {pose.y}")
-            path = planner.planning(self.pose_now.x, self.pose_now.y, pose.x, pose.y)
-            if path is not None:
-                self.path = path
-                self.viewer.plot_contours()
-                self.viewer.update()
-                self.viewer.plot_path(path)
-                self.viewer.show()
-                self.LOG(f"Path: {path}")
-                return path
 
     def step(self) -> None:
         """循环的每一步"""
@@ -74,59 +55,60 @@ class ExploreController(Node):
         if self.pose_now is None:
             return
 
+        if self.fsm_state != State.DRIVE:
+            self.last_dist = 1000  # DRIVE用到了这个，要初始化一个比较大的数
         match self.fsm_state:
             case State.INIT:
-                pass  # 初始化自转一圈，在Map中实现
+                pass  # 初始化自转一圈，在Map中实现，没有真的控制转一圈
 
             case State.STOP:
-                if self.plan() is not None:
-                    self.fsm_state = State.ROTATE
-                    self.current_target = self.path[1]  # 获取路径第一个点
-                    self.idx_now = 1
+                self.LOG("下一轮规划")
+                self.map.step()
+                self.viewer.update(mode=MaskViewer.UpdateMode.CONTOUR)
+                self.path = self.map.canPoints[0].path
 
-            case State.ROTATE:
-                if self.current_target is not None:
-                    self.last_dist = 1000
-                    yaw_target = np.arctan2(
-                        self.current_target[1] - self.pose_now.y, self.current_target[0] - self.pose_now.x
-                    )
-                    yaw_error = yaw_target - self.pose_now.yaw_rad
-                    yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
-                    if abs(yaw_error) < 0.1:  # 允许误差
-                        self.fsm_state = State.DRIVE
-                    else:
-                        twist.angular.z = 0.5 * yaw_error  # 旋转对准方向
-                        twist.angular.z = max(-0.1, min(0.1, twist.angular.z))
-                    self.LOG(f"target:{self.current_target},{math.degrees(yaw_target)} ; now:{self.pose_now}")
+                assert self.path is not None
+                self.viewer.plot_path(self.path)
+                self.fsm_state = State.DRIVE
+                self.targets = self.path.path_pose
+                self.current_target = self.targets[0]
+                self.idx_now = 0
 
             case State.DRIVE:
-                if self.current_target is not None:
-                    dist = math.sqrt(
-                        (self.path[1, 0] - self.pose_now.x) ** 2 + (self.path[1, 1] - self.pose_now.y) ** 2
-                    )
-                    self.get_logger().info(f"{dist}")
-                    if (
-                        dist < 0.2 or dist >= self.last_dist + 0.2 or (self.idx_now >= len(self.path) - 1 and dist < 3)
-                    ):  # 允许误差
-                        if self.idx_now >= len(self.path) - 1:
-                            self.fsm_state = State.STOP  # 到达终点，重新规划
-                        else:
-                            self.idx_now += 1
-                            self.current_target = self.path[self.idx_now]
-                            self.fsm_state = State.ROTATE
+                diff = self.pose_now - self.current_target
+                dist = diff.dist
+                self.get_logger().info(f"DRIVE: {dist:.2f}")
+                if dist < 0.2 or dist >= self.last_dist + 0.2:  # 允许误差
+                    self.fsm_state = State.ROTATE
 
-                    self.last_dist = min(dist, self.last_dist)
-                    twist.linear.x = 0.1 if dist >= 0.5 else 0.05  # 行驶
-                    yaw_target = np.arctan2(
-                        self.current_target[1] - self.pose_now.y, self.current_target[0] - self.pose_now.x
-                    )
-                    yaw_error = yaw_target - self.pose_now.yaw_rad
-                    yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
-                    if abs(yaw_error) > 0.01:
-                        twist.angular.z = 0.5 * yaw_error
-                        twist.angular.z = max(-0.01, min(0.01, twist.angular.z))
+                self.last_dist = min(dist, self.last_dist)
+                twist.linear.x = 0.1 if dist >= 0.5 else 0.05  # 行驶
+                yaw_target = np.arctan2(
+                    self.current_target.y - self.pose_now.y, self.current_target.x - self.pose_now.x
+                )
+                yaw_error = yaw_target - self.pose_now.yaw_rad
+                yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
+                if abs(yaw_error) > 0.01:
+                    twist.angular.z = 0.5 * yaw_error
+                    twist.angular.z = max(-0.01, min(0.01, twist.angular.z))
+                else:
+                    twist.angular.z = 0.0
+
+            case State.ROTATE:
+                yaw_target = self.current_target.yaw_rad
+                yaw_error = yaw_target - self.pose_now.yaw_rad
+                yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
+                if abs(yaw_error) < 0.1:  # 允许误差
+                    if self.idx_now >= len(self.targets) - 1:
+                        self.fsm_state = State.STOP  # 到达终点，重新规划
                     else:
-                        twist.angular.z = 0.0
+                        self.idx_now += 1
+                        self.current_target = self.targets[self.idx_now]
+                        self.fsm_state = State.DRIVE
+                else:
+                    twist.angular.z = 0.5 * yaw_error  # 旋转对准方向
+                    twist.angular.z = max(-0.1, min(0.1, twist.angular.z))
+                self.LOG(f"ROTATE: {self.pose_now.yaw_deg360:.2f} -> {self.current_target.yaw_deg360:.2f}")
 
         self.publisher.publish(twist)
 

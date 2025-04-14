@@ -14,8 +14,18 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from pathlib import Path
 
-from typing import Dict, List, Optional, Tuple, Callable
+try:
+    from .Pose2D import Pose2D
+except:
+    from Pose2D import Pose2D
+
+from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
 from numpy.typing import NDArray
+
+
+class RoverPath(NamedTuple):
+    path_float: NDArray[np.float64]
+    path_pose: List[Pose2D]
 
 
 class AStarPlanner:
@@ -35,7 +45,7 @@ class AStarPlanner:
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
-        self.euclidean_dilated_least = distance_map <= rr * MAP_SCALE * 1.0  # 最小的膨胀，剪枝时使用这个
+        self.euclidean_dilated_least = distance_map <= rr * MAP_SCALE * 1.2  # 最小的膨胀，剪枝时使用这个
         self.euclidean_dilated_base = distance_map <= rr * MAP_SCALE * 1.5  # 这两个用于规划
         self.euclidean_dilated_safe = distance_map <= rr * MAP_SCALE * 2.0
 
@@ -55,9 +65,7 @@ class AStarPlanner:
         def __repr__(self):
             return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
 
-    def planning(
-        self, sx: float, sy: float, gx: float, gy: float, mask: NDArray[np.bool_]
-    ) -> Optional[NDArray[np.int32]]:
+    def planning(self, sx: float, sy: float, goal: Pose2D, mask: NDArray[np.bool_]) -> Optional[RoverPath]:
         """
         二阶段A*路径规划
 
@@ -69,9 +77,11 @@ class AStarPlanner:
             mask (NDArray[np.bool_]): 地图掩码，True表示探明区域
 
         Returns:
-            Optional[NDArray[np.int32]]: (N, 2) 存储路径上的各点坐标
+            Optional[RoverPath]: (N, 2) 存储路径上的各点坐标(单位m)，还有一个Pose2D的列表
         """
         self.obstacle_map: NDArray[np.bool_] = self.euclidean_dilated_safe | ~mask
+        self.goal = goal  # 最后生成的路径要记录这个，里面有个偏航角
+        gx, gy = goal.x, goal.y
         result = self.plan_once(sx, sy, gx, gy)
         if result is None:
             self.obstacle_map = self.euclidean_dilated_base | ~mask
@@ -164,8 +174,12 @@ class AStarPlanner:
         simplified.append(path[-1])  # 终点
         return np.array(simplified)
 
-    def simplify_path(self, path: NDArray[np.int32]):
-        """三角剪枝，移除不必要的拐点直至收敛"""
+    def simplify_path(self, path: NDArray[np.int32]) -> RoverPath:
+        """
+        三角剪枝，移除不必要的拐点直至收敛
+        输入的路径存储的栅格坐标
+        输出的路径存储的是实际的m
+        """
         length_last = len(path) + 1
         cnt = 0
         while length_last != len(path) and cnt <= 5:
@@ -174,8 +188,17 @@ class AStarPlanner:
             cnt += 1
 
         # 把单位从栅格坐标变换回m
-        path = (path * self.resolution).astype(np.int32)
-        return path
+        path_float = (path * self.resolution).astype(np.float64)
+        path_pose: List[Pose2D] = []
+        x1, y1 = path_float[0]
+        for i in range(1, path_float.shape[0]):
+            x2, y2 = path_float[i]
+            yaw = np.arctan2(y2 - y1, x2 - x1)
+            path_pose.append(Pose2D(x1, y1, yaw))
+            x1, y1 = x2, y2
+        path_pose.append(self.goal)
+
+        return RoverPath(path_float, path_pose)
 
     def calc_final_path(self, goal_node: Node, closed_set: Dict[int, Node]) -> NDArray[np.int32]:
         # generate final course
@@ -263,7 +286,7 @@ def main():
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), god=True)
     planner = AStarPlanner(0.8, map.obstacle_mask, Map.MAP_SCALE)
     start = time.time()
-    path = planner.planning(2, 2, 12.5, 8, map.mask)
+    path = planner.planning(2, 2, Pose2D(12.5, 8, 0), map.mask)
     print(f"{time.time() - start:.4f} sec")
 
     viewer = MaskViewer(map)

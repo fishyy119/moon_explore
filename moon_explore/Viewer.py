@@ -4,12 +4,15 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import Polygon
 from matplotlib.text import Annotation, Text
 
+
 try:
     from .Pose2D import Pose2D
     from .Map import Map
+    from .AStar import RoverPath
 except:
     from Pose2D import Pose2D
     from Map import Map
+    from AStar import RoverPath
 
 from typing import Tuple, List, Callable
 from enum import Enum, auto
@@ -74,16 +77,20 @@ class MaskViewer:
             if plot_curvature:
                 self.plot_curvature(curvature)
 
-    def plot_path(self, path: NDArray[np.int32], **kwargs):
+    def plot_path(self, path: RoverPath, **kwargs):
         if not hasattr(self, "_path_line"):
             kwargs.setdefault("color", "green")
             kwargs.setdefault("linewidth", 2)
             kwargs.setdefault("label", "Path")
             self._path_line = self.ax.plot(
-                path[:, 0] * Map.MAP_SCALE, path[:, 1] * Map.MAP_SCALE, color="green", linewidth=2, label="Path"
+                path.path_float[:, 0] * Map.MAP_SCALE,
+                path.path_float[:, 1] * Map.MAP_SCALE,
+                color="green",
+                linewidth=2,
+                label="Path",
             )[0]
         else:
-            self._path_line.set_data(path[:, 0], path[:, 1])
+            self._path_line.set_data(path.path_float[:, 0] * Map.MAP_SCALE, path.path_float[:, 1] * Map.MAP_SCALE)
         # .ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
 
     @staticmethod
@@ -101,8 +108,8 @@ class MaskViewer:
         yaw = pose.yaw_rad
 
         # 为了让线段变得不显眼
-        dx = np.cos(yaw) * 0.001
-        dy = np.sin(yaw) * 0.001
+        dx = np.cos(yaw) * 0.01
+        dy = np.sin(yaw) * 0.01
         # 绘制箭头
         arrow = self.ax.annotate(
             text="",
@@ -178,7 +185,7 @@ class MaskViewer:
             self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
         elif mode == MaskViewer.UpdateMode.CONTOUR:
             self.plot_mask()
-            self.plot_contours(plot_curvature=False)
+            self.plot_contours(plot_curvature=False, show_peak=False)
 
             # 候选点的箭头
             if hasattr(self, "_pose2d_arrows_canPose"):
@@ -188,7 +195,7 @@ class MaskViewer:
                         text_obj.remove()
             self._pose2d_arrows_canPose = []  # 清空记录
             for point in self.map.canPoints:
-                arrow = self.plot_pose2d(point.pose, color="red", scale=20, text=f"{point.score:.2f}")
+                arrow = self.plot_pose2d(point.pose, color="red", scale=20, text=f"{point.path_cost:.2f}")
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
 
         self.show()
