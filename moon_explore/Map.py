@@ -19,10 +19,10 @@ from numpy.typing import NDArray
 @dataclass
 class CandidatePoint:
     pose: Pose2D  # 候选的目标位姿
-    length: int  # 对应弧段的长度
-    score: float  # 候选点的评分
+    seg_len: int  # 对应弧段的长度
     path: Optional[NDArray[np.int32]] = None  # 规划的路径的坐标
-    path_score: float = 0
+    path_cost: float = 0  # 运动成本
+    score: float = 0  # 最终评分
 
 
 class Contour(NamedTuple):
@@ -352,7 +352,7 @@ class Map:
                     yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
                     canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
 
-                    self.canPoints.append(CandidatePoint(canPose, seg_len, 0))
+                    self.canPoints.append(CandidatePoint(canPose, seg_len**2))
         self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
 
         # 对每个点调用评价函数并排序
@@ -367,8 +367,11 @@ class Map:
                 self.rover_pose.x, self.rover_pose.y, point.pose.x, point.pose.y, self.mask
             )
         self.canPoints = [point for point in self.canPoints if point.path is not None]
+        if len(self.canPoints) == 0:
+            print("无法规划出路径")
+            return
 
-        # *2.根据规划的路径计算运动成本
+        # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
             path = point.path  # (N,2)
             assert path is not None
@@ -377,17 +380,35 @@ class Map:
             cost = 0
             pose1 = self.rover_pose
             for i in range(1, path.shape[0]):
-                x2, y2 = path[i]
-
-                # 当前段目标点 yaw
+                x2, y2 = path[i, 0], path[i, 1]
                 yaw = np.arctan2(y2 - y1, x2 - x1)
                 pose2 = Pose2D(x2, y2, yaw)
-
                 diff = pose1 - pose2
+                # 更新用于下次
+                pose1 = pose2
+                x1, y1 = x2, y2
 
                 time = diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
                 cost += time
-            point.path_score = cost
+            point.path_cost = cost
+        path_costs = np.array([p.path_cost for p in self.canPoints])
+        sum_path_cost = np.sum(path_costs)
+        cv_path_cost = np.std(path_costs) / np.mean(path_costs)
+
+        # * 3.目标区域的信息增益
+        seg_lens = np.array([p.seg_len for p in self.canPoints])
+        sum_seg_len = np.sum(seg_lens)
+        cv_seg_len = np.std(seg_lens) / np.mean(seg_lens)
+
+        # * 4.计算分数
+        T1 = 100
+        T2 = 100
+        score_segs = T1 * cv_seg_len * seg_lens / sum_seg_len
+        score_paths = T2 * cv_path_cost * path_costs / sum_path_cost
+        scores = score_segs - score_paths
+
+        for point, score in zip(self.canPoints, scores):
+            point.score = score
 
     def step(self) -> None:
         self.contours: List[Contour] = []
@@ -415,6 +436,7 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(20, 20, 3))
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
     map.step()
+    print(f"Path plan time: {time.time() - start_time:.2f} seconds")
 
     viewer = MaskViewer(map)
     viewer.update()

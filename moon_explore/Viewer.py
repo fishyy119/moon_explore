@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.patches import Polygon
-from matplotlib.text import Annotation
+from matplotlib.text import Annotation, Text
 
 try:
     from .Pose2D import Pose2D
@@ -95,7 +95,7 @@ class MaskViewer:
         plt.ylabel("Curvature")
         plt.grid(True)
 
-    def plot_pose2d(self, pose: Pose2D, text="", color: str = "red", scale: int = 20) -> Annotation:
+    def plot_pose2d(self, pose: Pose2D, text="", color: str = "red", scale: int = 20) -> Tuple[Annotation, Text | None]:
         x = pose.x * Map.MAP_SCALE
         y = pose.y * Map.MAP_SCALE
         yaw = pose.yaw_rad
@@ -103,8 +103,9 @@ class MaskViewer:
         # 为了让线段变得不显眼
         dx = np.cos(yaw) * 0.001
         dy = np.sin(yaw) * 0.001
+        # 绘制箭头
         arrow = self.ax.annotate(
-            text=text,
+            text="",
             xy=(x + dx, y + dy),  # 箭头指向方向
             xytext=(x, y),  # 箭头起点
             arrowprops=dict(
@@ -116,7 +117,20 @@ class MaskViewer:
             ),
             zorder=5,
         )
-        return arrow
+        # 绘制分数文本（可选）
+        text_obj = None
+        if text:
+            text_obj = self.ax.text(
+                x + dx * 100,
+                y + dy * 100,
+                text,
+                color="black",
+                fontsize=8,
+                ha="center",
+                va="bottom",
+                zorder=6,
+            )
+        return arrow, text_obj
 
     def _old_plot_pose2d(self, pose: Pose2D, color: str = "red"):
         """旧版的绘制方法，问题在于不会自动缩放，不用了但是不想扔"""
@@ -155,8 +169,10 @@ class MaskViewer:
 
             # 当前巡视器的箭头(多巡视器扩展不完全)
             if hasattr(self, "_pose2d_arrows_rover"):
-                for arrow in self._pose2d_arrows_rover:
+                for arrow, text_obj in self._pose2d_arrows_rover:
                     arrow.remove()  # 移除之前绘制的箭头
+                    if text_obj:
+                        text_obj.remove()
             self._pose2d_arrows_rover = []  # 清空记录
             arrow = self.plot_pose2d(self.map.rover_pose, color="magenta", scale=20)
             self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
@@ -166,11 +182,13 @@ class MaskViewer:
 
             # 候选点的箭头
             if hasattr(self, "_pose2d_arrows_canPose"):
-                for arrow in self._pose2d_arrows_canPose:
+                for arrow, text_obj in self._pose2d_arrows_canPose:
                     arrow.remove()  # 移除之前绘制的箭头
+                    if text_obj:
+                        text_obj.remove()
             self._pose2d_arrows_canPose = []  # 清空记录
             for point in self.map.canPoints:
-                arrow = self.plot_pose2d(point.pose, color="red", scale=20)
+                arrow = self.plot_pose2d(point.pose, color="red", scale=20, text=f"{point.score:.2f}")
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
 
         self.show()
