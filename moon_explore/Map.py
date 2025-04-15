@@ -63,6 +63,7 @@ class Map:
         两次计算的断点刚好在正后方，而对于覆盖的判断需要覆盖整个栅格，截断刚好漏掉这里的格子
         （不过调成400就可以模拟360度全覆盖了）
         （补充，有些情况下调成900才没出问题，没细看）（在Pose2D(26, 29, 0.7)下测试）
+        （进一步修复边界点bug后，未对其重复测试）
 
         Args:
             pose (Pose2D): 用于精简计算用到的障碍物，只计算周围的
@@ -156,24 +157,40 @@ class Map:
         theta_ul = np.degrees(np.arctan2(dy + 0.5, dx - 0.5))
         theta_br = np.degrees(np.arctan2(dy - 0.5, dx + 0.5))
         theta_bl = np.degrees(np.arctan2(dy - 0.5, dx - 0.5))
+        theta_max_o: NDArray[np.float64] = np.maximum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
+        theta_min_o: NDArray[np.float64] = np.minimum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
 
-        theta_max: NDArray[np.float64] = np.maximum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
-        theta_min: NDArray[np.float64] = np.minimum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
+        ##########################################################################################
+        # 在-180 ~ 180计算一次，这次忽略x负半轴
+        theta_max = theta_max_o.copy()  # 这一次的特殊值调整不能保留到下一次
+        theta_min = theta_min_o.copy()  # 这一次的特殊值调整不能保留到下一次
 
+        # 对于跳变的异常位置，不对其进行考虑
+        theta_diff = theta_max - theta_min
+        mask_wrap = theta_diff > 180
+        theta_max[mask_wrap] = -10000  # 设置一个不可能用到的角度值避免碰撞
+        theta_min[mask_wrap] = -10000
         r_max1 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg180, r)
 
-        # 将角度范围变换到0~360，再运算一次，两者取并集
-        theta_max_t = (theta_max + 360) % 360
-        theta_min_t = (theta_min + 360) % 360
+        ##########################################################################################
+        # 将角度范围变换到0~360，再运算一次，忽略x正半轴
+        theta_max_t = (theta_max_o + 360) % 360
+        theta_min_t = (theta_min_o + 360) % 360
         # 新范围下原边界点处大小出现错乱
         theta_max = np.maximum(theta_max_t, theta_min_t)
         theta_min = np.minimum(theta_max_t, theta_min_t)
+        # 对于跳变的异常位置，不对其进行考虑
+        theta_diff = theta_max - theta_min
+        mask_wrap = theta_diff > 180
+        theta_max[mask_wrap] = -10000  # 设置一个不可能用到的角度值避免碰撞
+        theta_min[mask_wrap] = -10000
         r_max2 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg360, r, deg_type=360)
 
+        # 取并集
         r_max = np.maximum(r_max1, r_max2)
 
         # 按照矩阵的样式，维度0对应y，维度1对应x
-        mask = r <= r_max
+        mask = r <= (r_max + 2)  # 这样能稍微把边界处的障碍物变为可视的（不过要假设障碍别太小）
         return mask
 
     def rover_move(self, pose: Pose2D) -> None:
@@ -393,15 +410,6 @@ class Map:
                 self.rover_pose, p.pose, self.planner.euclidean_dilated_least & ~self.mask
             )
 
-        # * 1.先对所有候选点规划路径
-        # for point in self.canPoints:
-        #     point.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, point.pose, self.mask)
-        # self.canPoints = [point for point in self.canPoints if point.path is not None]
-        # if len(self.canPoints) == 0:
-        #     # TODO：这种情况可能是车走进了障碍物里？
-        #     print("无法规划出路径")
-        #     return
-
         # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
             assert point.path is not None
@@ -470,7 +478,9 @@ if __name__ == "__main__":
     # map.rover_move(Pose2D(29, 29, 0.5))
     # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
-    map.rover_init(Pose2D(28, 26, 0.7))
+    # map.rover_init(Pose2D(28, 26, 0.7))
+    # map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True))
+    map.rover_init(Pose2D(27, 25.2472, 30, deg=True))
     # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
