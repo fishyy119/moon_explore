@@ -1,9 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as pe
+from matplotlib import cm
+from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.patches import Polygon
 from matplotlib.text import Annotation, Text
-
 
 try:
     from .Pose2D import Pose2D
@@ -30,6 +32,14 @@ class MaskViewer:
         self.fig, self.ax = plt.subplots()
         self.ax.set_xlim(0, 500)
         self.ax.set_ylim(0, 500)
+
+        # 用于将评分映射为颜色
+        # plasm / inferno / magma 和巡视器用的品红色有冲突
+        # cividis 色彩不太丰富
+        self.cmap = cm.get_cmap("viridis")
+        # self.cmap = LinearSegmentedColormap.from_list(
+        #     "viridis_trunc", self.cmap(np.linspace(0, 1, 256))
+        # )  # 截断末尾的亮色
 
     def plot_mask(self, god=False):
         # 创建一个与mask相同大小的矩阵，并根据条件设置值
@@ -102,7 +112,9 @@ class MaskViewer:
         plt.ylabel("Curvature")
         plt.grid(True)
 
-    def plot_pose2d(self, pose: Pose2D, text="", color: str = "red", scale: int = 20) -> Tuple[Annotation, Text | None]:
+    def plot_pose2d(
+        self, pose: Pose2D, color: Tuple[float, float, float, float] | str, text="", scale: int = 20
+    ) -> Tuple[Annotation, Text | None]:
         x = pose.x * Map.MAP_SCALE
         y = pose.y * Map.MAP_SCALE
         yaw = pose.yaw_rad
@@ -121,6 +133,7 @@ class MaskViewer:
                 mutation_scale=scale,
                 shrinkA=0,
                 shrinkB=0,
+                path_effects=[pe.withStroke(linewidth=2, foreground="gray")],  # 添加外框
             ),
             zorder=5,
         )
@@ -180,7 +193,7 @@ class MaskViewer:
                     arrow.remove()  # 移除之前绘制的箭头
                     if text_obj:
                         text_obj.remove()
-            self._pose2d_arrows_rover = []  # 清空记录
+            self._pose2d_arrows_rover: List[Tuple[Annotation, Text | None]] = []  # 清空记录
             arrow = self.plot_pose2d(self.map.rover_pose, color="magenta", scale=20)
             self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
         elif mode == MaskViewer.UpdateMode.CONTOUR:
@@ -193,10 +206,28 @@ class MaskViewer:
                     arrow.remove()  # 移除之前绘制的箭头
                     if text_obj:
                         text_obj.remove()
-            self._pose2d_arrows_canPose = []  # 清空记录
+            self._pose2d_arrows_canPose: List[Tuple[Annotation, Text | None]] = []  # 清空记录
+
+            # 将分数映射为颜色
+            scores = [p.score for p in self.map.canPoints]
+            min_score, max_score = min(scores), max(scores)
+            self.norm = Normalize(vmin=min_score, vmax=max_score)
             for point in self.map.canPoints:
-                arrow = self.plot_pose2d(point.pose, color="red", scale=20, text=f"{point.path_cost:.2f}")
+                rgba_color = self.cmap(self.norm(point.score))
+                arrow = self.plot_pose2d(point.pose, color=rgba_color, scale=10)
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
+
+            # 清除之前 colorbar（如果有）
+            if hasattr(self, "_pose2d_colorbar"):
+                self._pose2d_colorbar.remove()
+
+            # 创建伪图像对象以生成 colorbar
+            sm = cm.ScalarMappable(cmap=self.cmap, norm=self.norm)
+            sm.set_array([])
+
+            # 添加 colorbar
+            self._pose2d_colorbar = self.fig.colorbar(sm, ax=self.ax, fraction=0.03, pad=0.04)
+            self._pose2d_colorbar.set_label("Score", rotation=270, labelpad=15)
 
         self.show()
 

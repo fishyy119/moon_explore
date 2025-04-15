@@ -37,7 +37,7 @@ class Map:
     FOV = 90  # 视场角，度数
 
     def __init__(self, map_file, god=False) -> None:
-        self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)
+        self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)  # True表示已探明
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
         self.planner = AStarPlanner(0.8, self.obstacle_mask, Map.MAP_SCALE)
         self.rover_pose = Pose2D(0, 0, 0)
@@ -189,6 +189,7 @@ class Map:
         new_mask = self.generate_sector_mask(pose)
         Map.FOV = original_FOV
         self.mask |= new_mask
+        print(f"INIT at {pose}")
 
     def get_contours(self) -> List[NDArray[np.int32]]:
         """提取连续曲线轮廓，这里传参还是不要传边界点，直接传可视范围就好"""
@@ -307,7 +308,7 @@ class Map:
         NEIGHBORHOOD_SIZE = 5  # 确定朝向的邻域大小
         HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
         MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）HALF_NEIGHBOR
-        NUM_POSE = 5  # 每个目标点生成几个包围的点
+        NUM_POSE = 3  # 每个目标点生成几个包围的点
 
         def generate_pose2D_backwark(pose: Pose2D, d: float) -> List[Pose2D]:
             """
@@ -321,7 +322,7 @@ class Map:
                 List[Pose2D]: 在距离xy一定距离的地方，生成扇形包围的若干候选位姿
             """
             result: List[Pose2D] = []
-            for angle in np.linspace(-math.pi / 2, math.pi / 2, num=NUM_POSE):
+            for angle in np.linspace(-math.pi / 6, math.pi / 6, num=NUM_POSE):
                 dx = d * math.cos(pose.yaw_rad + angle)
                 dy = d * math.sin(pose.yaw_rad + angle)
                 # new_y = pose.y - dy
@@ -372,24 +373,34 @@ class Map:
                     yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
                     canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
 
-                    for p in generate_pose2D_backwark(canPose, 2):
-                        if self.mask[int(p.y * Map.MAP_SCALE), int(p.x * Map.MAP_SCALE)] == False:
+                    for i, p in enumerate(generate_pose2D_backwark(canPose, 2)):
+                        x, y = int(p.x * Map.MAP_SCALE), int(p.y * Map.MAP_SCALE)
+                        if not (
+                            x >= 0 and x < self.mask.shape[1] and y >= 0 and y <= self.mask.shape[0] and self.mask[y, x]
+                        ):
                             continue
-                        # TODO: 偏的朝向给较小的seglen
-                        self.canPoints.append(CandidatePoint(p, seg_len / num_subsegments + 3 * num_subsegments))
+                        decay_factor = abs(i - NUM_POSE) * 0.5 + 1
+                        self.canPoints.append(
+                            CandidatePoint(p, seg_len / decay_factor / num_subsegments + 3 * num_subsegments)
+                        )
 
         self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
-        self.canPoints.sort(key=lambda p: p.score, reverse=True)
 
     def evaluate_candidate_points(self) -> None:
+        # * 1.首先假设直线可达，规划一个用于计算路径成本的路径
+        for p in self.canPoints:
+            p.path = self.planner.generate_straight_path(
+                self.rover_pose, p.pose, self.planner.euclidean_dilated_least & ~self.mask
+            )
+
         # * 1.先对所有候选点规划路径
-        for point in self.canPoints:
-            point.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, point.pose, self.mask)
-        self.canPoints = [point for point in self.canPoints if point.path is not None]
-        if len(self.canPoints) == 0:
-            # TODO：这种情况可能是车走进了障碍物里？
-            print("无法规划出路径")
-            return
+        # for point in self.canPoints:
+        #     point.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, point.pose, self.mask)
+        # self.canPoints = [point for point in self.canPoints if point.path is not None]
+        # if len(self.canPoints) == 0:
+        #     # TODO：这种情况可能是车走进了障碍物里？
+        #     print("无法规划出路径")
+        #     return
 
         # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
@@ -404,6 +415,10 @@ class Map:
 
                 time = 2 * diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
                 cost += time
+
+            # 存在碰撞，估计时间加倍
+            if point.path.collision:
+                cost *= 2
 
             point.path_cost = math.exp(-0.01 * cost)
             # point.path_cost = cost
@@ -425,6 +440,14 @@ class Map:
 
         for point, score in zip(self.canPoints, scores):
             point.score = score
+
+        # * 5.排序，随后规划真正可行的路径
+        self.canPoints.sort(key=lambda p: p.score, reverse=True)
+        for p in self.canPoints:
+            p.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, p.pose, self.mask)
+            if p.path is not None:
+                break
+        self.canPoints = [point for point in self.canPoints if point.path is not None]
 
     def step(self) -> None:
         self.contours: List[Contour] = []

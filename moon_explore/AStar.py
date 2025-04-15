@@ -24,8 +24,9 @@ from numpy.typing import NDArray
 
 
 class RoverPath(NamedTuple):
-    path_float: NDArray[np.float64]
-    path_pose: List[Pose2D]
+    path_float: NDArray[np.float64]  # 这个传给绘图模块用于绘图
+    path_pose: List[Pose2D]  # 这个指定若干带朝向的路径点，对其跟踪
+    collision: bool  # 表示路径是否与障碍物发生碰撞（对于估计的直线路径有意义）
 
 
 class AStarPlanner:
@@ -64,6 +65,29 @@ class AStarPlanner:
 
         def __repr__(self):
             return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
+
+    def generate_straight_path(self, source: Pose2D, goal: Pose2D, mask: NDArray[np.bool_]) -> RoverPath:
+        """
+        在估计路径成本时，直接生成一条直线路径用于估计，并且对存在碰撞的路径估计加倍的时间
+
+        Args:
+            source (Pose2D): 初始位姿
+            goal (Pose2D): 目标位姿
+            mask (NDArray[np.bool_]): 计算碰撞使用的地图
+
+        Returns:
+            RoverPath: 返回直线路径，其中collision标识是否碰撞
+        """
+        path_float = np.array([[source.x, source.y], [goal.x, goal.y]])
+        yaw1 = np.arctan2(goal.y - source.y, goal.x - source.x)
+        pose1 = Pose2D(source.x, source.y, yaw1)
+        collision = self.line_of_sight(
+            mask,
+            (source.x / self.resolution, source.y / self.resolution),
+            (goal.x / self.resolution, goal.y / self.resolution),
+        )
+
+        return RoverPath(path_float, [pose1, goal], not collision)
 
     def planning(self, sx: float, sy: float, goal: Pose2D, mask: NDArray[np.bool_]) -> Optional[RoverPath]:
         """
@@ -152,7 +176,10 @@ class AStarPlanner:
 
     @staticmethod
     def line_of_sight(grid, p1, p2):
-        """检查p1到p2之间是否有障碍物"""
+        """
+        检查p1到p2之间是否有障碍物
+        传入栅格坐标
+        """
         x1, y1 = p1
         x2, y2 = p2
         points = np.linspace((x1, y1), (x2, y2), num=100)  # 采样100个点
@@ -198,7 +225,7 @@ class AStarPlanner:
             x1, y1 = x2, y2
         path_pose.append(self.goal)
 
-        return RoverPath(path_float, path_pose)
+        return RoverPath(path_float, path_pose, False)
 
     def calc_final_path(self, goal_node: Node, closed_set: Dict[int, Node]) -> NDArray[np.int32]:
         # generate final course
