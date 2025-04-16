@@ -323,13 +323,19 @@ class Map:
 
     def cal_canPose(self) -> None:
         NEIGHBORHOOD_SIZE = 5  # 确定朝向的邻域大小
-        HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
-        MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）HALF_NEIGHBOR
-        NUM_POSE = 3  # 每个目标点生成几个包围的点
+        MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）
+        NUM_POSE = 3  # 每个目标点生成几个包围的点（奇数）
+        POSE_DEG_STEP = 30  # 生成点时的角度步长
 
-        def generate_pose2D_backwark(pose: Pose2D, d: float) -> List[Pose2D]:
+        HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
+        HALF_NUM_POSE = NUM_POSE // 2
+        ANGLE_OFFSET_DEG = np.arange(-HALF_NUM_POSE, HALF_NUM_POSE + 1) * POSE_DEG_STEP
+        ANGLE_OFFSET_RAD = np.radians(ANGLE_OFFSET_DEG)
+        ANGLE_OFFSET_COS = np.cos(ANGLE_OFFSET_RAD)
+
+        def generate_pose2D_backward(pose: Pose2D, d: float) -> List[Pose2D]:
             """
-            generate_pose2D_backwark _summary_
+            generate_pose2D_backward _summary_
 
             Args:
                 pose (Pose2D): 其xy是目标观测点的坐标，yaw指示了法向
@@ -339,11 +345,9 @@ class Map:
                 List[Pose2D]: 在距离xy一定距离的地方，生成扇形包围的若干候选位姿
             """
             result: List[Pose2D] = []
-            for angle in np.linspace(-math.pi / 6, math.pi / 6, num=NUM_POSE):
+            for angle in ANGLE_OFFSET_RAD:
                 dx = d * math.cos(pose.yaw_rad + angle)
                 dy = d * math.sin(pose.yaw_rad + angle)
-                # new_y = pose.y - dy
-                # new_yaw = np.arctan2(pose.y - new_y, pose.x -new_x)
                 new_pose = Pose2D(pose.x - dx, pose.y - dy, pose.yaw_rad + angle)
                 result.append(new_pose)
             return result
@@ -353,7 +357,6 @@ class Map:
             peaks_idx_np = np.array(peaks_idx)
             segment_lengths = peaks_idx_np[1:] - peaks_idx_np[:-1]  # 每段的长度
             seg_anchors = [(start, end) for start, end in zip(peaks_idx[:-1], peaks_idx[1:])]
-            # midpoints_idx = peaks_idx[:-1] + segment_lengths // 2  # 计算每段的中点索引
 
             for seg_idx, (start, end) in enumerate(seg_anchors):
                 seg_len = segment_lengths[seg_idx]
@@ -390,25 +393,42 @@ class Map:
                     yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
                     canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
 
-                    for i, p in enumerate(generate_pose2D_backwark(canPose, 2)):
+                    for i, p in enumerate(generate_pose2D_backward(canPose, 2)):
                         x, y = int(p.x * Map.MAP_SCALE), int(p.y * Map.MAP_SCALE)
                         if not (
                             x >= 0 and x < self.mask.shape[1] and y >= 0 and y <= self.mask.shape[0] and self.mask[y, x]
                         ):
                             continue
-                        decay_factor = abs(i - NUM_POSE) * 0.5 + 1
+                        decay_factor = ANGLE_OFFSET_COS[i]
+                        subseg_factors = [1, 1.5, 2.5]
                         self.canPoints.append(
-                            CandidatePoint(p, seg_len / decay_factor / num_subsegments + 3 * num_subsegments)
+                            CandidatePoint(
+                                p, seg_len / num_subsegments * decay_factor * subseg_factors[num_subsegments - 1]
+                            )
                         )
 
         self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
 
     def evaluate_candidate_points(self) -> None:
+        D_M = 4  # 基准时间：直线距离m
+        A_D = 30  # 基准时间：旋转角度deg
+        L_S = 0.1  # 最大线速度 m/s
+        A_S = 0.1  # 最大角速度 rad/s
+        BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
+        ALPHA = -np.log(0.9) / BASE_TIME
+        # print(ALPHA)
+
+        BETA = 0.5
+        T_SEG = 100 * BETA
+        T_PATH = 100 * (1 - BETA)
+
         # * 1.首先假设直线可达，规划一个用于计算路径成本的路径
         for p in self.canPoints:
-            p.path = self.planner.generate_straight_path(
-                self.rover_pose, p.pose, self.planner.euclidean_dilated_least & ~self.mask
-            )
+            # p.path = self.planner.generate_straight_path(
+            #     self.rover_pose, p.pose, self.planner.euclidean_dilated_least & ~self.mask
+            # )
+            # 真正路径规划用到的反倒是这个。。。感觉这个更安全点，也会让结果更一致
+            p.path = self.planner.generate_straight_path(self.rover_pose, p.pose, self.planner.euclidean_dilated_least)
 
         # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
@@ -428,23 +448,19 @@ class Map:
             if point.path.collision:
                 cost *= 2
 
-            point.path_cost = math.exp(-0.01 * cost)
+            point.path_cost = math.exp(-ALPHA * cost)
             # point.path_cost = cost
         path_costs = np.array([p.path_cost for p in self.canPoints])
-        sum_path_cost = np.sum(path_costs)
-        cv_path_cost = np.std(path_costs) / np.mean(path_costs)
 
         # * 3.目标区域的信息增益
         seg_lens = np.array([p.seg_len for p in self.canPoints])
-        sum_seg_len = np.sum(seg_lens)
-        cv_seg_len = np.std(seg_lens) / np.mean(seg_lens)
+        max_seg_len = np.max(seg_lens)
 
         # * 4.计算分数
-        T_SEG = 100
-        T_PATH = 100
-        score_segs = T_SEG * seg_lens / sum_seg_len
+        score_segs = T_SEG * seg_lens / max_seg_len
         score_paths = T_PATH * path_costs
         scores = score_segs + score_paths
+        # scores = seg_lens / path_costs
 
         for point, score in zip(self.canPoints, scores):
             point.score = score
@@ -468,28 +484,29 @@ class Map:
 
 
 if __name__ == "__main__":
+    from MyTimer import MyTimer
     from Viewer import MaskViewer
-    import time
     import matplotlib.pyplot as plt
 
-    start_time = time.time()
+    timer = MyTimer()
+
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"))
     # map.rover_move(Pose2D(29, 29, 0.5))
     # map.rover_move(Pose2D(23, 25, 3))
     # map.rover_move(Pose2D(25, 29, 0.1))
     # map.rover_init(Pose2D(28, 26, 0.7))
-    # map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True))
-    map.rover_init(Pose2D(27, 25.2472, 30, deg=True))
+    map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True))
     # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
-    print(f"Execution time: {time.time() - start_time:.2f} seconds")
+    timer.checkpoint("可视计算")
     map.step()
-    print(f"Path plan time: {time.time() - start_time:.2f} seconds")
+    timer.checkpoint("路径规划")
 
     viewer = MaskViewer(map)
     viewer.update()
-    viewer.update(mode=viewer.UpdateMode.CONTOUR)
+    viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=True)
+    # viewer.plot_path(map.canPoints[0].path)
 
     plt.ioff()
     plt.show()

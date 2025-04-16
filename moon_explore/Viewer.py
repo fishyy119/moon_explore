@@ -6,6 +6,7 @@ from matplotlib import cm
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.patches import Polygon
 from matplotlib.text import Annotation, Text
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 try:
     from .Pose2D import Pose2D
@@ -32,6 +33,10 @@ class MaskViewer:
         self.fig, self.ax = plt.subplots()
         self.ax.set_xlim(0, 500)
         self.ax.set_ylim(0, 500)
+
+        # 颜色条等高（在右边加个子图放颜色条）
+        divider = make_axes_locatable(self.ax)
+        self.cax = divider.append_axes("right", size="5%", pad=0.05)
 
         # 用于将评分映射为颜色
         # plasm / inferno / magma 和巡视器用的品红色有冲突
@@ -183,7 +188,7 @@ class MaskViewer:
         arrow_patch = Polygon(arrow_points, closed=True, facecolor=color, edgecolor="black", zorder=5)
         self.ax.add_patch(arrow_patch)
 
-    def update(self, mode: UpdateMode = UpdateMode.MOVE):
+    def update(self, mode: UpdateMode = UpdateMode.MOVE, show_score_text=False):
         if mode == MaskViewer.UpdateMode.MOVE:
             self.plot_mask()
 
@@ -214,7 +219,10 @@ class MaskViewer:
             self.norm = Normalize(vmin=min_score, vmax=max_score)
             for point in self.map.canPoints:
                 rgba_color = self.cmap(self.norm(point.score))
-                arrow = self.plot_pose2d(point.pose, color=rgba_color, scale=10)
+                if show_score_text:
+                    arrow = self.plot_pose2d(point.pose, color=rgba_color, scale=10, text=f"{point.score:.2f}")
+                else:
+                    arrow = self.plot_pose2d(point.pose, color=rgba_color, scale=10)
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
 
             # 清除之前 colorbar（如果有）
@@ -226,7 +234,7 @@ class MaskViewer:
             sm.set_array([])
 
             # 添加 colorbar
-            self._pose2d_colorbar = self.fig.colorbar(sm, ax=self.ax, fraction=0.03, pad=0.04)
+            self._pose2d_colorbar = self.fig.colorbar(sm, cax=self.cax)
             self._pose2d_colorbar.set_label("Score", rotation=270, labelpad=15)
 
         self.show()
