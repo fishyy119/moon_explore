@@ -1,4 +1,5 @@
 import numpy as np
+import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as pe
@@ -9,17 +10,19 @@ from matplotlib.text import Annotation, Text
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 try:
-    from .Pose2D import Pose2D
     from .Map import Map
     from .AStar import RoverPath
+    from .Utils import Setting, Pose2D
 except:
-    from Pose2D import Pose2D
     from Map import Map
     from AStar import RoverPath
+    from Utils import Setting, Pose2D
 
-from typing import Tuple, List, Callable
+from typing import Tuple, List, Union
 from enum import Enum, auto
 from numpy.typing import NDArray
+
+ColorType = Union[Tuple[float, float, float, float], Tuple[float, float, float], str]
 
 
 class MaskViewer:
@@ -29,10 +32,13 @@ class MaskViewer:
 
     def __init__(self, map_instance: Map):
         plt.ion()
+
         self.map = map_instance
         self.fig, self.ax = plt.subplots()
         self.ax.set_xlim(0, 500)
         self.ax.set_ylim(0, 500)
+
+        self.palette = sns.color_palette("colorblind")
 
         # 颜色条等高（在右边加个子图放颜色条）
         divider = make_axes_locatable(self.ax)
@@ -41,6 +47,7 @@ class MaskViewer:
         # 用于将评分映射为颜色
         # plasm / inferno / magma 和巡视器用的品红色有冲突
         # cividis 色彩不太丰富
+        # 最大值亮度过高在白色背景下不明显：加一个浅灰色边框
         self.cmap = cm.get_cmap("viridis")
         # self.cmap = LinearSegmentedColormap.from_list(
         #     "viridis_trunc", self.cmap(np.linspace(0, 1, 256))
@@ -81,7 +88,7 @@ class MaskViewer:
         self._peak_scatters = []
 
         for contour, curvature, peaks_idx in self.map.contours:
-            scatter = self.ax.scatter(contour[:, 0], contour[:, 1], color="orange", s=5)
+            scatter = self.ax.scatter(contour[:, 0], contour[:, 1], color=self.palette[1], s=5)
             self._contour_scatters.append(scatter)
 
             if show_peak:
@@ -98,14 +105,16 @@ class MaskViewer:
             kwargs.setdefault("linewidth", 2)
             kwargs.setdefault("label", "Path")
             self._path_line = self.ax.plot(
-                path.path_float[:, 0] * Map.MAP_SCALE,
-                path.path_float[:, 1] * Map.MAP_SCALE,
-                color="green",
+                path.path_float[:, 0] * Setting.MAP_SCALE,
+                path.path_float[:, 1] * Setting.MAP_SCALE,
+                color=self.palette[6],
                 linewidth=2,
                 label="Path",
             )[0]
         else:
-            self._path_line.set_data(path.path_float[:, 0] * Map.MAP_SCALE, path.path_float[:, 1] * Map.MAP_SCALE)
+            self._path_line.set_data(
+                path.path_float[:, 0] * Setting.MAP_SCALE, path.path_float[:, 1] * Setting.MAP_SCALE
+            )
         # .ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
 
     @staticmethod
@@ -118,10 +127,14 @@ class MaskViewer:
         plt.grid(True)
 
     def plot_pose2d(
-        self, pose: Pose2D, color: Tuple[float, float, float, float] | str, text="", scale: int = 20
+        self,
+        pose: Pose2D,
+        color: ColorType,
+        text="",
+        scale: int = 20,
     ) -> Tuple[Annotation, Text | None]:
-        x = pose.x * Map.MAP_SCALE
-        y = pose.y * Map.MAP_SCALE
+        x = pose.x * Setting.MAP_SCALE
+        y = pose.y * Setting.MAP_SCALE
         yaw = pose.yaw_rad
 
         # 为了让线段变得不显眼
@@ -160,8 +173,8 @@ class MaskViewer:
     def _old_plot_pose2d(self, pose: Pose2D, color: str = "red"):
         """旧版的绘制方法，问题在于不会自动缩放，不用了但是不想扔"""
         # 这个手动创建的多边形，不会自动缩放
-        x = pose.x * Map.MAP_SCALE
-        y = pose.y * Map.MAP_SCALE
+        x = pose.x * Setting.MAP_SCALE
+        y = pose.y * Setting.MAP_SCALE
         yaw = pose.yaw_rad
         arrow_length = 10
         arrow_width = 10
@@ -188,6 +201,37 @@ class MaskViewer:
         arrow_patch = Polygon(arrow_points, closed=True, facecolor=color, edgecolor="black", zorder=5)
         self.ax.add_patch(arrow_patch)
 
+    def plot_voronoi(self, num: int):
+        if hasattr(self, "_voronoi_graph"):
+            for g in self._voronoi_graph:
+                g.remove()
+
+        if num == 1:
+            return
+        elif num == 2:
+            p = [r.rover_pose.xy * Setting.MAP_SCALE for r in self.map.rovers]
+            p1 = p[0]
+            p2 = p[1]
+            mid = (p1 + p2) / 2
+
+            # 垂直方向向量（单位化）
+            dir_vec = p2 - p1
+            perp_vec = np.array([-dir_vec[1], dir_vec[0]])
+            perp_vec = perp_vec / np.linalg.norm(perp_vec)
+
+            # 用于延长中垂线（你也可以设为任务区边界大小）
+            length = 300
+            line_start = mid - perp_vec * length
+            line_end = mid + perp_vec * length
+
+            self._voronoi_graph = self.ax.plot(
+                [line_start[0], line_end[0]], [line_start[1], line_end[1]], color=self.palette[0]
+            )
+        elif num == 3:
+            raise NotImplementedError
+        else:
+            raise NotImplementedError
+
     def update(self, mode: UpdateMode = UpdateMode.MOVE, show_score_text=False):
         if mode == MaskViewer.UpdateMode.MOVE:
             self.plot_mask()
@@ -199,11 +243,14 @@ class MaskViewer:
                     if text_obj:
                         text_obj.remove()
             self._pose2d_arrows_rover: List[Tuple[Annotation, Text | None]] = []  # 清空记录
-            arrow = self.plot_pose2d(self.map.rover_pose, color="magenta", scale=20)
-            self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
+
+            for rover in self.map.rovers:
+                arrow = self.plot_pose2d(rover.rover_pose, color=self.palette[4], scale=20)
+                self._pose2d_arrows_rover.append(arrow)  # 记录当前绘制的箭头
         elif mode == MaskViewer.UpdateMode.CONTOUR:
             self.plot_mask()
             self.plot_contours(plot_curvature=False, show_peak=False)
+            self.plot_voronoi(len(self.map.rovers))
 
             # 候选点的箭头
             if hasattr(self, "_pose2d_arrows_canPose"):
@@ -213,7 +260,7 @@ class MaskViewer:
                         text_obj.remove()
             self._pose2d_arrows_canPose: List[Tuple[Annotation, Text | None]] = []  # 清空记录
 
-            # 将分数映射为颜色
+            # 将分数映射为颜色s
             scores = [p.score for p in self.map.canPoints]
             min_score, max_score = min(scores), max(scores)
             self.norm = Normalize(vmin=min_score, vmax=max_score)

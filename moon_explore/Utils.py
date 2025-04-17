@@ -1,9 +1,46 @@
-import math
 import numpy as np
+import math
+import time
 from scipy.spatial.transform import Rotation
 
 from numpy.typing import NDArray
 from typing import NamedTuple
+
+
+from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
+from numpy.typing import NDArray
+from dataclasses import dataclass
+
+
+class Setting:
+    MAP_SCALE = 10  # 浮点数坐标乘以这个数便对应到索引坐标
+    MAX_RANGE = 6.0  # 最远可视距离，米
+    FOV: int = 90  # 视场角，度数
+
+    class canPose:
+        NEIGHBORHOOD_SIZE = 5  # 确定朝向的邻域大小
+        MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）
+        NUM_POSE = 3  # 每个目标点生成几个包围的点（奇数）
+        POSE_DEG_STEP = 30  # 生成点时的角度步长
+
+        HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
+        HALF_NUM_POSE = NUM_POSE // 2
+        ANGLE_OFFSET_DEG = np.arange(-HALF_NUM_POSE, HALF_NUM_POSE + 1) * POSE_DEG_STEP
+        ANGLE_OFFSET_RAD = np.radians(ANGLE_OFFSET_DEG)
+        ANGLE_OFFSET_COS = np.cos(ANGLE_OFFSET_RAD)
+
+    class eval:
+        D_M = 4  # 基准时间：直线距离m
+        A_D = 30  # 基准时间：旋转角度deg
+        L_S = 0.1  # 最大线速度 m/s
+        A_S = 0.1  # 最大角速度 rad/s
+        BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
+        ALPHA = -np.log(0.9) / BASE_TIME
+        # print(ALPHA)
+
+        BETA = 0.2
+        T_SEG = 100 * BETA
+        T_PATH = 100 * (1 - BETA)
 
 
 class PoseDiff(NamedTuple):
@@ -50,10 +87,13 @@ class Pose2D:
         # yaw = Rotation.from_quat([qx, qy, qz, qw]).as_euler("xyz")[2]
         return cls(x, y, yaw)
 
-    def __sub__(self, other: "Pose2D") -> PoseDiff:
-        distance = math.sqrt((other._x - self._x) ** 2 + (other._y - self._y) ** 2)
-        diff_abs = math.fabs(self.yaw_deg360 - other.yaw_deg360)
-        yaw_diff = min([diff_abs, 360 - diff_abs])
+    def __sub__(self, other: "Pose2D") -> float:
+        return math.hypot(self._x - other._x, self._y - other._y)
+
+    def __xor__(self, other: "Pose2D") -> PoseDiff:
+        distance = self - other
+        diff_abs = abs(self.yaw_deg360 - other.yaw_deg360)
+        yaw_diff = min(diff_abs, 360 - diff_abs)
         return PoseDiff(dist=distance, yaw_diff_deg=yaw_diff, yaw_diff_rad=yaw_diff * math.pi / 180)
 
     @property
@@ -99,6 +139,10 @@ class Pose2D:
         self._y = value
 
     @property
+    def xy(self) -> NDArray[np.float64]:
+        return np.array([self._x, self._y])
+
+    @property
     def yaw_rad(self, deg=False) -> float:
         "偏航角，弧度制"
         return self._yaw
@@ -123,3 +167,41 @@ class Pose2D:
 
     def __repr__(self):
         return f"{self._x}, {self._y}, {self.yaw_deg360}"
+
+
+class RoverPath(NamedTuple):
+    path_float: NDArray[np.float64]  # 这个传给绘图模块用于绘图
+    path_pose: List[Pose2D]  # 这个指定若干带朝向的路径点，对其跟踪
+    collision: bool  # 表示路径是否与障碍物发生碰撞（对于估计的直线路径有意义）
+
+
+@dataclass
+class CandidatePoint:
+    pose: Pose2D  # 候选的目标位姿
+    seg_len: int  # 对应弧段的长度
+    path: Optional[RoverPath] = None  # 规划的路径的坐标
+    path_cost: float = 0  # 运动成本
+    score: float = 0  # 最终评分
+
+
+class Contour(NamedTuple):
+    points: NDArray[np.int32]  # 轮廓点（他的类型好像也是float）
+    curvature: NDArray[np.float64]  # 曲率
+    peaks_idx: List[int]  # 拐点索引
+
+
+class MyTimer:
+    def __init__(self):
+        self.start_time = time.time()
+        self.last_time = self.start_time
+        self.records = []
+
+    def checkpoint(self, label=None):
+        now = time.time()
+        duration = now - self.last_time
+        total = now - self.start_time
+        self.records.append((label, duration, total))
+        if label is None:
+            label = f"checkpoint{len(self.records)}"
+        print(f"[{label}] {duration:.3f}s (Total: {total:.3f}s)")
+        self.last_time = now

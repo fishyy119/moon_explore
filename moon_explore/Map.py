@@ -5,208 +5,55 @@ from scipy.signal import argrelextrema
 from pathlib import Path
 
 try:
-    from .Pose2D import Pose2D
-    from .AStar import AStarPlanner, RoverPath
+    from .AStar import AStarPlanner
+    from .Rover import Rover
+    from .Utils import Setting, Pose2D, Contour, CandidatePoint
 except:
-    from Pose2D import Pose2D
-    from AStar import AStarPlanner, RoverPath
+    from AStar import AStarPlanner
+    from Rover import Rover
+    from Utils import Setting, Pose2D, Contour, CandidatePoint
 
-from typing import Optional, Tuple, List, Callable, NamedTuple
-from dataclasses import dataclass
+from typing import List
 from numpy.typing import NDArray
 
 
-@dataclass
-class CandidatePoint:
-    pose: Pose2D  # 候选的目标位姿
-    seg_len: int  # 对应弧段的长度
-    path: Optional[RoverPath] = None  # 规划的路径的坐标
-    path_cost: float = 0  # 运动成本
-    score: float = 0  # 最终评分
-
-
-class Contour(NamedTuple):
-    points: NDArray[np.int32]  # 轮廓点（他的类型好像也是float）
-    curvature: NDArray[np.float64]  # 曲率
-    peaks_idx: List[int]  # 拐点索引
-
-
 class Map:
-    MAP_SCALE = 10  # 浮点数坐标乘以这个数便对应到索引坐标
-    MAX_RANGE = 6.0  # 最远可视距离，米
-    FOV = 90  # 视场角，度数
-
-    def __init__(self, map_file, god=False) -> None:
+    def __init__(self, map_file, god=False, num_rovers: int = 1) -> None:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)  # True表示已探明
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
-        self.planner = AStarPlanner(0.8, self.obstacle_mask, Map.MAP_SCALE)
-        self.rover_pose = Pose2D(0, 0, 0)
-        self.contours: List[Contour] = []
         if god:
             self.mask = np.ones_like(self.mask, dtype=np.bool_)
 
-    def cal_r_max(
-        self,
-        pose: Pose2D,
-        theta_max: NDArray[np.float64],
-        theta_min: NDArray[np.float64],
-        target_yaw: float,
-        r: NDArray[np.float64],
-        deg_type: int = 180,
-    ) -> NDArray[np.float64]:
-        """
-        一个封装的计算各个格点理论上最大可视距离的函数，
-        由于角度的环形度量会影响间断点处的大小比较，
-        因此这个函数在两种不同的角度范围约定下运行两次，最后取并集
+        self.planner = AStarPlanner(0.8, self.obstacle_mask)
+        self.contours: List[Contour] = []
 
-        在360的FOV下，对于正后方的一条线会有计算错误，这种整个环形全部可视的情况无法通过两次截断模拟出来
-        两次计算的断点刚好在正后方，而对于覆盖的判断需要覆盖整个栅格，截断刚好漏掉这里的格子
-        （不过调成400就可以模拟360度全覆盖了）
-        （补充，有些情况下调成900才没出问题，没细看）（在Pose2D(26, 29, 0.7)下测试）
-        （进一步修复边界点bug后，未对其重复测试）
+        self.rovers: List[Rover] = []
+        self.num_rovers = num_rovers
+        shared_mask = self.mask.view()
+        shared_ob_mask = self.obstacle_mask.view()
+        shared_mask.setflags(write=False)
+        shared_ob_mask.setflags(write=False)
+        for i in range(self.num_rovers):
+            self.rovers.append(Rover(shared_mask, shared_ob_mask, self.planner))
+        # 分别为每个巡视器存储分配给其的目标点
+        self.rover_assignments: List[List[CandidatePoint]] = [[] for _ in range(self.num_rovers)]
 
-        Args:
-            pose (Pose2D): 用于精简计算用到的障碍物，只计算周围的
-            theta_max (NDArray[np.float64]): 每个格子对应一个角度范围，这是最大值
-            theta_min (NDArray[np.float64]): 每个格子对应一个角度范围，这是最小值
-            target_yaw (float): 巡视器的目标朝向，在其左右根据FOV扩展
-            r (NDArray[np.float64]): 各个格点到巡视器的距离
-            deg_type (int, optional): 标识使用了何种角度范围，对应处理巡视器的视角边界处角度值
-
-        Returns:
-            NDArray[np.float64]: 每个格点的理论最大可视距离（考虑FOV、障碍）
-        """
-        # 考虑障碍物，每个角度上最大可视距离
-        r_max = np.zeros_like(r)
-        range_min = target_yaw - Map.FOV / 2
-        range_max = target_yaw + Map.FOV / 2
-
-        # 设计上这个函数在两个不同的角度值范围约定下运行两次取并集，因此这里可以舍弃间断点导致的跳跃值
-        if deg_type == 180:
-            range_min = max(range_min, -180)
-            range_max = min(range_max, 180.1)  # 感觉对于边界应该取大一点，但是没有测试
-        elif deg_type == 360:
-            range_min = max(range_min, 0)
-            range_max = min(range_max, 360.1)
-        else:
-            raise NotImplementedError
-
-        r_max[(range_min <= theta_min) & (theta_max <= range_max)] = Map.MAX_RANGE * Map.MAP_SCALE
-
-        # 提取障碍物的角度范围和距离，只提取附近可能用得到的障碍物，减小计算量
-        H, W = self.mask.shape
-        grid_x, grid_y = np.meshgrid(np.arange(H), np.arange(W))
-        ob_grid_x = grid_x[self.obstacle_mask]
-        ob_grid_y = grid_y[self.obstacle_mask]
-
-        # 计算障碍物是否在 (pos_x, pos_y) 附近的 120x120 区域内
-        local_mask = (
-            (ob_grid_x >= (pose.x - Map.MAX_RANGE) * Map.MAP_SCALE)
-            & (ob_grid_x <= (pose.x + Map.MAX_RANGE) * Map.MAP_SCALE)
-            & (ob_grid_y >= (pose.y - Map.MAX_RANGE) * Map.MAP_SCALE)
-            & (ob_grid_y <= (pose.y + Map.MAX_RANGE) * Map.MAP_SCALE)
-        )
-
-        # 仅保留该区域内的障碍物数据
-        ob_r = r[self.obstacle_mask][local_mask]
-        ob_theta_max = theta_max[self.obstacle_mask][local_mask]
-        ob_theta_min = theta_min[self.obstacle_mask][local_mask]
-
-        # **先对障碍物按角度排序**
-        #! 大改之后貌似没用到这个排序的特性了
-        sort_idx = np.argsort(ob_theta_min)
-        ob_theta_min_sorted = ob_theta_min[sort_idx]
-        ob_theta_max_sorted = ob_theta_max[sort_idx]
-        ob_r_sorted = ob_r[sort_idx]
-
-        # **对栅格的 theta_min 进行排序，便于搜索**
-        theta_min_flat = theta_min.ravel()
-        theta_max_flat = theta_max.ravel()
-        r_max_flat = r_max.ravel()  # 注意这是引用
-
-        theta_sort_idx = np.argsort(theta_min_flat)
-        theta_min_sorted = theta_min_flat[theta_sort_idx]
-        theta_max_sorted = theta_max_flat[theta_sort_idx]
-
-        # **批量更新 r_max**
-        for i in range(len(ob_r_sorted)):
-            affected_indices = theta_sort_idx[
-                (theta_min_sorted < ob_theta_max_sorted[i]) & (theta_max_sorted > ob_theta_min_sorted[i])
-            ]
-            np.minimum.at(r_max_flat, affected_indices, ob_r_sorted[i])
-
-        return r_max
-
-    def generate_sector_mask(self, pose: Pose2D) -> NDArray[np.bool_]:
-        """计算扇形范围，考虑障碍"""
-        if self.obstacle_mask[round(pose.y * Map.MAP_SCALE), round(pose.x * Map.MAP_SCALE)]:
-            # 卡墙里就别算了
-            return np.zeros_like(self.mask, dtype=np.bool_)
-
-        # 创建坐标网格
-        H, W = self.mask.shape
-        x, y = np.meshgrid(np.arange(H), np.arange(W))
-        dx = x - pose.x * Map.MAP_SCALE
-        dy = y - pose.y * Map.MAP_SCALE
-
-        # 计算极坐标
-        r = np.sqrt(dx**2 + dy**2)
-
-        # 对于角度，计算栅格四个顶点的角度，然后存储最大值与最小值
-        theta_ur = np.degrees(np.arctan2(dy + 0.5, dx + 0.5))
-        theta_ul = np.degrees(np.arctan2(dy + 0.5, dx - 0.5))
-        theta_br = np.degrees(np.arctan2(dy - 0.5, dx + 0.5))
-        theta_bl = np.degrees(np.arctan2(dy - 0.5, dx - 0.5))
-        theta_max_o: NDArray[np.float64] = np.maximum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
-        theta_min_o: NDArray[np.float64] = np.minimum.reduce([theta_ur, theta_ul, theta_br, theta_bl])
-
-        ##########################################################################################
-        # 在-180 ~ 180计算一次，这次忽略x负半轴
-        theta_max = theta_max_o.copy()  # 这一次的特殊值调整不能保留到下一次
-        theta_min = theta_min_o.copy()  # 这一次的特殊值调整不能保留到下一次
-
-        # 对于跳变的异常位置，不对其进行考虑
-        theta_diff = theta_max - theta_min
-        mask_wrap = theta_diff > 180
-        theta_max[mask_wrap] = -10000  # 设置一个不可能用到的角度值避免碰撞
-        theta_min[mask_wrap] = -10000
-        r_max1 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg180, r)
-
-        ##########################################################################################
-        # 将角度范围变换到0~360，再运算一次，忽略x正半轴
-        theta_max_t = (theta_max_o + 360) % 360
-        theta_min_t = (theta_min_o + 360) % 360
-        # 新范围下原边界点处大小出现错乱
-        theta_max = np.maximum(theta_max_t, theta_min_t)
-        theta_min = np.minimum(theta_max_t, theta_min_t)
-        # 对于跳变的异常位置，不对其进行考虑
-        theta_diff = theta_max - theta_min
-        mask_wrap = theta_diff > 180
-        theta_max[mask_wrap] = -10000  # 设置一个不可能用到的角度值避免碰撞
-        theta_min[mask_wrap] = -10000
-        r_max2 = self.cal_r_max(pose, theta_max, theta_min, pose.yaw_deg360, r, deg_type=360)
-
-        # 取并集
-        r_max = np.maximum(r_max1, r_max2)
-
-        # 按照矩阵的样式，维度0对应y，维度1对应x
-        mask = r <= (r_max + 2)  # 这样能稍微把边界处的障碍物变为可视的（不过要假设障碍别太小）
-        return mask
-
-    def rover_move(self, pose: Pose2D) -> None:
-        self.rover_pose = pose
-        new_mask = self.generate_sector_mask(pose)
+    def rover_move(self, pose: Pose2D, index: int = 0) -> None:
+        self.rovers[index].rover_pose = pose
+        new_mask = self.rovers[index].generate_sector_mask(pose)
         self.mask |= new_mask
 
-    def rover_init(self, pose: Pose2D) -> None:
+    def rover_init(self, pose: Pose2D, index: int = 0) -> None:
         """与`rover_move`类似，不过这个假设巡视器在最初位置原地转一圈，所以画360度的图"""
-        self.rover_pose = pose
-        original_FOV = Map.FOV
-        Map.FOV = 900
-        new_mask = self.generate_sector_mask(pose)
-        Map.FOV = original_FOV
+        original_FOV = Setting.FOV
+        Setting.FOV = 900
+
+        self.rovers[index].rover_pose = pose
+        new_mask = self.rovers[index].generate_sector_mask(pose)
         self.mask |= new_mask
-        print(f"INIT at {pose}")
+        print(f"INIT{index} at {pose}")
+
+        Setting.FOV = original_FOV
 
     def get_contours(self) -> List[NDArray[np.int32]]:
         """提取连续曲线轮廓，这里传参还是不要传边界点，直接传可视范围就好"""
@@ -322,16 +169,10 @@ class Map:
         return new_peaks
 
     def cal_canPose(self) -> None:
-        NEIGHBORHOOD_SIZE = 5  # 确定朝向的邻域大小
-        MAX_SEGMENT_LENGTH = 50  # 决定分裂成多少段（至少一段）
-        NUM_POSE = 3  # 每个目标点生成几个包围的点（奇数）
-        POSE_DEG_STEP = 30  # 生成点时的角度步长
-
-        HALF_NEIGHBOR = NEIGHBORHOOD_SIZE // 2
-        HALF_NUM_POSE = NUM_POSE // 2
-        ANGLE_OFFSET_DEG = np.arange(-HALF_NUM_POSE, HALF_NUM_POSE + 1) * POSE_DEG_STEP
-        ANGLE_OFFSET_RAD = np.radians(ANGLE_OFFSET_DEG)
-        ANGLE_OFFSET_COS = np.cos(ANGLE_OFFSET_RAD)
+        ANGLE_OFFSET_RAD = Setting.canPose.ANGLE_OFFSET_RAD
+        ANGLE_OFFSET_COS = Setting.canPose.ANGLE_OFFSET_COS
+        HALF_NEIGHBOR = Setting.canPose.HALF_NEIGHBOR
+        MAX_SEGMENT_LENGTH = Setting.canPose.MAX_SEGMENT_LENGTH
 
         def generate_pose2D_backward(pose: Pose2D, d: float) -> List[Pose2D]:
             """
@@ -391,89 +232,36 @@ class Map:
                     # 计算目标点到质心的向量
                     vector_to_centroid = centroid - np.array([x, y])
                     yaw = np.arctan2(vector_to_centroid[1], vector_to_centroid[0])  # 计算目标点的朝向
-                    canPose = Pose2D(contour[mid][0] / Map.MAP_SCALE, contour[mid][1] / Map.MAP_SCALE, yaw)
+                    canPose = Pose2D(contour[mid][0] / Setting.MAP_SCALE, contour[mid][1] / Setting.MAP_SCALE, yaw)
 
                     for i, p in enumerate(generate_pose2D_backward(canPose, 2)):
-                        x, y = int(p.x * Map.MAP_SCALE), int(p.y * Map.MAP_SCALE)
+                        x, y = int(p.x * Setting.MAP_SCALE), int(p.y * Setting.MAP_SCALE)
                         if not (
                             x >= 0 and x < self.mask.shape[1] and y >= 0 and y <= self.mask.shape[0] and self.mask[y, x]
                         ):
                             continue
                         decay_factor = ANGLE_OFFSET_COS[i]
-                        subseg_factors = [1, 1.5, 2.5]
+                        subseg_factors = [1, 1.5, 2.5, 3.5]
                         self.canPoints.append(
                             CandidatePoint(
                                 p, seg_len / num_subsegments * decay_factor * subseg_factors[num_subsegments - 1]
                             )
                         )
 
-        self.evaluate_candidate_points()  # 这里处理self.canPoints，并且逐步把必要的信息填充上
+    def assign_points_to_rovers(self, index: int = 0) -> None:
+        """
+        将候选点分配给不同的巡视器，基于距离和当前巡视器的位置。
+        """
+        rover_positions = [rover.rover_pose for rover in self.rovers]
+        self.rover_assignments[index] = []
 
-    def evaluate_candidate_points(self) -> None:
-        D_M = 4  # 基准时间：直线距离m
-        A_D = 30  # 基准时间：旋转角度deg
-        L_S = 0.1  # 最大线速度 m/s
-        A_S = 0.1  # 最大角速度 rad/s
-        BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
-        ALPHA = -np.log(0.9) / BASE_TIME
-        # print(ALPHA)
-
-        BETA = 0.5
-        T_SEG = 100 * BETA
-        T_PATH = 100 * (1 - BETA)
-
-        # * 1.首先假设直线可达，规划一个用于计算路径成本的路径
-        for p in self.canPoints:
-            # p.path = self.planner.generate_straight_path(
-            #     self.rover_pose, p.pose, self.planner.euclidean_dilated_least & ~self.mask
-            # )
-            # 真正路径规划用到的反倒是这个。。。感觉这个更安全点，也会让结果更一致
-            p.path = self.planner.generate_straight_path(self.rover_pose, p.pose, self.planner.euclidean_dilated_least)
-
-        # * 2.根据规划的路径计算运动成本
         for point in self.canPoints:
-            assert point.path is not None
-            path = point.path.path_pose
+            distances = [point.pose - rover_pose for rover_pose in rover_positions]
+            closest_rover = np.argmin(distances)
+            if closest_rover == index:
+                self.rover_assignments[index].append(point)
 
-            p_last = self.rover_pose
-            cost = 0
-            for p in path:
-                diff = p - p_last
-                p_last = p
-
-                time = 2 * diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
-                cost += time
-
-            # 存在碰撞，估计时间加倍
-            if point.path.collision:
-                cost *= 2
-
-            point.path_cost = math.exp(-ALPHA * cost)
-            # point.path_cost = cost
-        path_costs = np.array([p.path_cost for p in self.canPoints])
-
-        # * 3.目标区域的信息增益
-        seg_lens = np.array([p.seg_len for p in self.canPoints])
-        max_seg_len = np.max(seg_lens)
-
-        # * 4.计算分数
-        score_segs = T_SEG * seg_lens / max_seg_len
-        score_paths = T_PATH * path_costs
-        scores = score_segs + score_paths
-        # scores = seg_lens / path_costs
-
-        for point, score in zip(self.canPoints, scores):
-            point.score = score
-
-        # * 5.排序，随后规划真正可行的路径
-        self.canPoints.sort(key=lambda p: p.score, reverse=True)
-        for p in self.canPoints:
-            p.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, p.pose, self.mask)
-            if p.path is not None:
-                break
-        self.canPoints = [point for point in self.canPoints if point.path is not None]
-
-    def step(self) -> None:
+    def step(self, index: int = 0) -> None:
         self.contours: List[Contour] = []
         for contour in self.get_contours():
             curvature = self.curvature_discrete(contour)
@@ -481,32 +269,37 @@ class Map:
             self.contours.append(Contour(contour, curvature, peaks_idx))
 
         self.cal_canPose()
+        self.assign_points_to_rovers(index)
+        # * 这些 canPoints 都是传递的引用，所以 Rover 那边进行的赋值可以在 Map 这里访问到
+        others_target = [r.targetPoint for r in self.rovers if r.targetPoint is not None]
+        self.rovers[index].evaluate_candidate_points(self.rover_assignments[index], others_target)
+        # * Viewer 需要访问这个变量，除了idx对应的巡视器点被更新了，其他的仍然不变
+        self.canPoints = [point for assignment in self.rover_assignments for point in assignment]
 
 
 if __name__ == "__main__":
-    from MyTimer import MyTimer
+    from Utils import MyTimer
     from Viewer import MaskViewer
     import matplotlib.pyplot as plt
 
     timer = MyTimer()
+    N = 2
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
-    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"))
-    # map.rover_move(Pose2D(29, 29, 0.5))
-    # map.rover_move(Pose2D(23, 25, 3))
-    # map.rover_move(Pose2D(25, 29, 0.1))
-    # map.rover_init(Pose2D(28, 26, 0.7))
-    map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True))
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=2)
+    map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True), 0 % N)
+    map.rover_init(Pose2D(28, 25.2472, 270, deg=True), 1 % N)
     # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
     timer.checkpoint("可视计算")
-    map.step()
+    for i in range(N):
+        map.step(i)
     timer.checkpoint("路径规划")
 
     viewer = MaskViewer(map)
     viewer.update()
-    viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=True)
-    # viewer.plot_path(map.canPoints[0].path)
+    viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=False)
+    viewer.plot_path(map.rovers[1].targetPoint.path)  # type: ignore
 
     plt.ioff()
     plt.show()

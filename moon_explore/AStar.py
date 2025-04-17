@@ -15,22 +15,16 @@ from scipy.ndimage import distance_transform_edt
 from pathlib import Path
 
 try:
-    from .Pose2D import Pose2D
+    from .Utils import Setting, Pose2D, RoverPath
 except:
-    from Pose2D import Pose2D
+    from Utils import Setting, Pose2D, RoverPath
 
-from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
+from typing import Dict, List, Optional
 from numpy.typing import NDArray
 
 
-class RoverPath(NamedTuple):
-    path_float: NDArray[np.float64]  # 这个传给绘图模块用于绘图
-    path_pose: List[Pose2D]  # 这个指定若干带朝向的路径点，对其跟踪
-    collision: bool  # 表示路径是否与障碍物发生碰撞（对于估计的直线路径有意义）
-
-
 class AStarPlanner:
-    def __init__(self, rr: float, obstacle_map: NDArray[np.bool_], MAP_SCALE: float) -> None:
+    def __init__(self, rr: float, obstacle_map: NDArray[np.bool_]) -> None:
         """
         Initialize grid map for a star planning
 
@@ -38,7 +32,7 @@ class AStarPlanner:
         obstacle_map: obstacle map (0: free, 1: obstacle)
         """
 
-        self.resolution = 1 / MAP_SCALE  # grid resolution [m]
+        self.resolution = 1 / Setting.MAP_SCALE  # grid resolution [m]
         self.rr = rr
         self.min_x, self.min_y = 0, 0
         self.max_x, self.max_y = 500, 500
@@ -46,9 +40,9 @@ class AStarPlanner:
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
-        self.euclidean_dilated_least = distance_map <= rr * MAP_SCALE * 1.2  # 最小的膨胀，剪枝时使用这个
-        self.euclidean_dilated_base = distance_map <= rr * MAP_SCALE * 1.5  # 这两个用于规划
-        self.euclidean_dilated_safe = distance_map <= rr * MAP_SCALE * 2.0
+        self.euclidean_dilated_least = distance_map <= rr * Setting.MAP_SCALE * 1.2  # 最小的膨胀，剪枝时使用这个
+        self.euclidean_dilated_base = distance_map <= rr * Setting.MAP_SCALE * 1.5  # 这两个用于规划
+        self.euclidean_dilated_safe = distance_map <= rr * Setting.MAP_SCALE * 2.0
 
         self.x_width, self.y_width = distance_map.shape
         self.motion = self.get_motion_model()
@@ -311,7 +305,7 @@ def main():
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), god=True)
-    planner = AStarPlanner(0.8, map.obstacle_mask, Map.MAP_SCALE)
+    planner = AStarPlanner(0.8, map.obstacle_mask)
     start = time.time()
     path = planner.planning(2, 2, Pose2D(12.5, 8, 0), map.mask)
     print(f"{time.time() - start:.4f} sec")

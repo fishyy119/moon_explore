@@ -49,8 +49,8 @@ class ExploreController(Node):
             self.map.rover_move(self.pose_now)
         self.viewer.update()
 
-    def step(self) -> None:
-        """循环的每一步"""
+    def step(self, index: int) -> None:
+        """每个巡视器独立进行指令发送，index表示编号"""
         twist = Twist()  # 待发送消息
         if self.pose_now is None:
             return
@@ -121,7 +121,8 @@ def main(args=None):
             # start_time = time.time()
 
             rclpy.spin_once(node)  # 处理 ROS2 事件
-            node.step()  # 执行主逻辑
+            node.step(0)  # 执行主逻辑
+            node.step(1)
             # 主要耗时在计算可视范围上，计算一次大概1.4s
 
     except KeyboardInterrupt:
