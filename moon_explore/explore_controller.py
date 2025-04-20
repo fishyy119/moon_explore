@@ -121,6 +121,10 @@ class ExploreController(Node):
         for rover in self.rovers.values():
             rover.step()
 
+    def destroy_node(self):
+        self.viewer.writer.close()  # 确保关闭视频
+        super().destroy_node()
+
 
 def main(args=None):
     rclpy.init(args=args)

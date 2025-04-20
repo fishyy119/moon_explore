@@ -1,5 +1,7 @@
 import numpy as np
 import seaborn as sns
+import imageio.v2 as iio
+import io
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as pe
@@ -8,6 +10,7 @@ from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.patches import Polygon
 from matplotlib.text import Annotation, Text
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from PIL import Image
 
 try:
     from .Map import Map
@@ -32,6 +35,9 @@ class MaskViewer:
 
     def __init__(self, map_instance: Map):
         plt.ion()
+
+        self.writer = iio.get_writer("output.mp4", fps=10)
+        self.buf = io.BytesIO()
 
         self.map = map_instance
         self.fig, self.ax = plt.subplots()
@@ -272,20 +278,58 @@ class MaskViewer:
                     arrow = self.plot_pose2d(point.pose, color=rgba_color, scale=10)
                 self._pose2d_arrows_canPose.append(arrow)  # 记录当前绘制的箭头
 
-            # 清除之前 colorbar（如果有）
-            if hasattr(self, "_pose2d_colorbar"):
-                self._pose2d_colorbar.remove()
-
             # 创建伪图像对象以生成 colorbar
             sm = cm.ScalarMappable(cmap=self.cmap, norm=self.norm)
             sm.set_array([])
-
-            # 添加 colorbar
-            self._pose2d_colorbar = self.fig.colorbar(sm, cax=self.cax)
-            self._pose2d_colorbar.set_label("Score", rotation=270, labelpad=15)
+            # 原先的remove方法貌似连带着吧cax干掉了（linux上貌似没有被干）
+            if hasattr(self, "_pose2d_colorbar"):
+                self._pose2d_colorbar.update_normal(sm)  # 重新绑定新值
+            else:
+                self._pose2d_colorbar = self.fig.colorbar(sm, cax=self.cax)
+                self._pose2d_colorbar.set_label("Score", rotation=270, labelpad=15)
 
         self.show()
 
     def show(self):
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
+
+        # 写入视频
+        self.fig.savefig(self.buf, format="png")
+        self.buf.seek(0)
+
+        img = Image.open(self.buf).convert("RGB")
+        frame = np.array(img)
+        self.writer.append_data(frame)
+
+        # 使用完后清空内容
+        self.buf.seek(0)
+        self.buf.truncate(0)
+
+
+if __name__ == "__main__":
+    from Utils import MyTimer
+    from Viewer import MaskViewer
+    from pathlib import Path
+    import time
+    import matplotlib.pyplot as plt
+
+    NPY_ROOT = Path(__file__).parent.parent / "resource"
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=1)
+    viewer = MaskViewer(map)
+
+    x, y, theta = 27, 25, 90  # 初始位置
+    while True:
+        pose = Pose2D(x, y, theta, deg=True)
+        map.rover_move(pose)  # 更新 mask
+        map.step()
+        viewer.update()
+        viewer.update(mode=MaskViewer.UpdateMode.CONTOUR)
+
+        # 模拟运动轨迹
+        y += 0.5
+        if y > 30:
+            break
+
+        time.sleep(1 / 30)  # 30Hz 更新
+    viewer.writer.close()
