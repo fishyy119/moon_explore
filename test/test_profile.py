@@ -10,6 +10,8 @@ if __name__ == "__main__":
 
     lp = LineProfiler()
     # lp_wrapper = lp(map.rovers[0].generate_sector_mask_non_ob)
+
+    lp.add_function(map.rovers[0].cal_r_max)
     lp_wrapper = lp(map.rovers[0].generate_sector_mask)
     lp_wrapper(Pose2D(28, 25, 160, deg=True))
     lp.print_stats()
