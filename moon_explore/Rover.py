@@ -21,6 +21,7 @@ class Rover:
         self.planner = planner
         self.rover_pose = Pose2D(0, 0, 0)
         self.targetPoint: CandidatePoint | None = None
+        self.targetPoint_mask: NDArray[np.bool_] | None = None  # 其他巡视器计算重叠衰减时使用，在分配目标的时候就计算
 
     def cal_r_max(
         self,
@@ -169,20 +170,69 @@ class Rover:
         mask = r <= (r_max + 2)  # 这样能稍微把边界处的障碍物变为可视的（不过要假设障碍别太小）
         return mask
 
-    def evaluate_candidate_points(self, canPoints: List[CandidatePoint], others_target: List[CandidatePoint]) -> None:
+    def generate_sector_mask_non_ob(self, pose: Pose2D) -> NDArray[np.bool_]:
+        """
+        用来给多巡视器的信息增益衰减，不考虑障碍，用的是最一开始开销小的方法
+        """
+        # 创建坐标网格
+        H, W = self.mask.shape
+        x, y = np.meshgrid(np.arange(H), np.arange(W))
+        dx = x - pose.x * Setting.MAP_SCALE
+        dy = y - pose.y * Setting.MAP_SCALE
+
+        # 计算极坐标
+        r = np.hypot(dx, dy)
+        theta = np.arctan2(dy, dx) * (180.0 / np.pi)
+        r_max = np.zeros_like(r)
+
+        ##################################################################################
+        target_yaw = pose.yaw_deg180
+        range_min = target_yaw - Setting.FOV / 2
+        range_max = target_yaw + Setting.FOV / 2
+        r_max[(range_min <= theta) & (theta <= range_max)] = Setting.MAX_RANGE * Setting.MAP_SCALE
+
+        if range_min < -180:
+            range_min_new = range_min + 360
+            r_max[(range_min_new <= theta)] = Setting.MAX_RANGE * Setting.MAP_SCALE
+
+        if range_max > 180:
+            range_max_new = range_max - 360
+            r_max[(theta <= range_max_new)] = Setting.MAX_RANGE * Setting.MAP_SCALE
+
+        mask = r <= r_max
+        return mask
+
+    def evaluate_candidate_points(
+        self,
+        canPoints: List[CandidatePoint],
+        others_target: List[CandidatePoint],
+        others_target_mask: List[NDArray[np.bool_]],
+    ) -> None:
         """
         Args:
             canPoints (List[CandidatePoint]): 由 Map 处理，根据距离分配给其的候选点
             others_target (List[CandidatePoint]): 其他巡视器的当前目标，为了避免探索同一区域，对信息进行衰减
+            others_target_mask (List[NDArray[np.bool_]]): 提前计算出来的其他巡视器目标区域
         """
         ALPHA = Setting.eval.ALPHA
         T_SEG = Setting.eval.T_SEG
         T_PATH = Setting.eval.T_PATH
         self.canPoints = canPoints
         # * 0.对于其他巡视器目标附近的点，衰减其信息量
-        for other_p in others_target:
-            for p in self.canPoints:
-                ...
+        others_union = np.zeros_like(self.mask)
+        for other_p in others_target_mask:
+            others_union |= other_p
+
+        for p in self.canPoints:
+            factor = 1.0
+            for other_p in others_target:
+                if p.pose - other_p.pose <= Setting.MAX_RANGE:
+                    esti_mask = self.generate_sector_mask_non_ob(p.pose)
+                    esti_sum = np.count_nonzero(esti_mask)
+                    overlap = np.count_nonzero((esti_mask & others_union))
+                    factor = 1 - overlap / esti_sum
+                    break
+            p.seg_len *= factor
 
         # * 1.首先假设直线可达，规划一个用于计算路径成本的路径
         for p in self.canPoints:
@@ -235,3 +285,5 @@ class Rover:
                 break
         self.canPoints = [point for point in self.canPoints if point.path is not None]
         self.targetPoint = self.canPoints[0]
+        self.targetPoint_mask = self.generate_sector_mask_non_ob(self.targetPoint.pose)
+        # 这里提前计算好预估的遮罩，其他巡视器衰减时直接取用

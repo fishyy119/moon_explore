@@ -272,9 +272,19 @@ class Map:
         self.assign_points_to_rovers(index)
         # * 这些 canPoints 都是传递的引用，所以 Rover 那边进行的赋值可以在 Map 这里访问到
         others_target = [r.targetPoint for r in self.rovers if r.targetPoint is not None]
-        self.rovers[index].evaluate_candidate_points(self.rover_assignments[index], others_target)
-        # * Viewer 需要访问这个变量，除了idx对应的巡视器点被更新了，其他的仍然不变
+        others_target_mask = [r.targetPoint_mask for r in self.rovers if r.targetPoint_mask is not None]
+        self.rovers[index].evaluate_candidate_points(self.rover_assignments[index], others_target, others_target_mask)
+        # * Viewer 需要访问这个变量，除了idx对应的巡视器点被更新了，其他的仍然不变（信息被保存在了assignments中）
         self.canPoints = [point for assignment in self.rover_assignments for point in assignment]
+
+
+# def test_mask():
+#     map.mask |= map.rovers[0].generate_sector_mask_non_ob(Pose2D(28, 25, 160, deg=True))
+#     map.mask |= map.rovers[0].generate_sector_mask_non_ob(Pose2D(28, 27, 20, deg=True))
+#     viewer.update()
+
+#     plt.ioff()
+#     plt.show()
 
 
 if __name__ == "__main__":
@@ -284,9 +294,14 @@ if __name__ == "__main__":
 
     timer = MyTimer()
     N = 2
-
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=2)
+    viewer = MaskViewer(map)
+
+    # if True:
+    #     test_mask()
+    #     exit(0)
+
     map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True), 0 % N)
     map.rover_init(Pose2D(28, 25.2472, 270, deg=True), 1 % N)
     # map.rover_move(Pose2D(26, 29, 0.7))
@@ -296,7 +311,6 @@ if __name__ == "__main__":
         map.step(i)
     timer.checkpoint("路径规划")
 
-    viewer = MaskViewer(map)
     viewer.update()
     viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=False)
     viewer.plot_path(map.rovers[1].targetPoint.path)  # type: ignore

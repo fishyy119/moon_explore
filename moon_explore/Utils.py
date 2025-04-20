@@ -3,10 +3,6 @@ import math
 import time
 from scipy.spatial.transform import Rotation
 
-from numpy.typing import NDArray
-from typing import NamedTuple
-
-
 from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
 from numpy.typing import NDArray
 from dataclasses import dataclass
@@ -178,7 +174,7 @@ class RoverPath(NamedTuple):
 @dataclass
 class CandidatePoint:
     pose: Pose2D  # 候选的目标位姿
-    seg_len: int  # 对应弧段的长度
+    seg_len: float  # 对应弧段的长度
     path: Optional[RoverPath] = None  # 规划的路径的坐标
     path_cost: float = 0  # 运动成本
     score: float = 0  # 最终评分
