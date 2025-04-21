@@ -246,7 +246,7 @@ class Map:
                     for i, p in enumerate(generate_pose2D_backward(canPose, 2)):
                         x, y = int(p.x * Setting.MAP_SCALE), int(p.y * Setting.MAP_SCALE)
                         if not (
-                            x >= 0 and x < self.mask.shape[1] and y >= 0 and y <= self.mask.shape[0] and self.mask[y, x]
+                            x >= 0 and x < self.mask.shape[1] and y >= 0 and y < self.mask.shape[0] and self.mask[y, x]
                         ):
                             continue  # 不在可视范围内
                         if self.distance_ob[y, x] <= 0.8 * Setting.MAP_SCALE * 1.2:

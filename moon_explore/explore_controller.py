@@ -47,9 +47,9 @@ class RoverController:
             msg.position.x, msg.position.y, msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w
         )
         if last_pose is None:
-            self.map.rover_init(self.pose_now)
+            self.map.rover_init(self.pose_now, self.id - 1)
         else:
-            self.map.rover_move(self.pose_now)
+            self.map.rover_move(self.pose_now, self.id - 1)
         self.viewer.update()
 
     def step(self):
@@ -66,11 +66,11 @@ class RoverController:
 
         elif m(State.STOP):
             self.LOG(f"[{self.id}] 重新规划")
-            self.map.step()
+            self.map.step(self.id - 1)
             self.viewer.update(mode=MaskViewer.UpdateMode.CONTOUR)
             self.path = self.map.rovers[self.id - 1].targetPoint.path  # type: ignore
             assert self.path is not None
-            self.viewer.plot_path(self.path)
+            self.viewer.plot_path(self.path, index=self.id)
             self.fsm_state = State.DRIVE
             self.targets = self.path.path_pose
             self.current_target = self.targets[0]
@@ -114,9 +114,9 @@ class ExploreController(Node):
 
         package_share_directory = get_package_share_directory("moon_explore")
         NPY_ROOT = Path(package_share_directory) / "resource"
-        self.map = Map(str(NPY_ROOT / "map_passable.npy"))
-        timestamp = datetime.now().strftime("%m%d_%H%M%S")
-        output_file = str(Path(PROJECT_DIR) / f"Data/video/output_{timestamp}.mp4")
+        self.map = Map(str(NPY_ROOT / "map_passable.npy"), num_rovers=num_rovers)
+        self.timestamp = datetime.now().strftime("%m%d_%H%M%S")
+        output_file = str(Path(PROJECT_DIR) / f"Data/video/output_{self.timestamp}.mp4")
         self.viewer = MaskViewer(self.map, output_file)
 
         self.rovers: Dict[int, RoverController] = {}
@@ -128,6 +128,7 @@ class ExploreController(Node):
             rover.step()
 
     def destroy_node(self):
+        np.save(str(Path(PROJECT_DIR) / f"Data/map/mask_{self.timestamp}.npy"), self.map.mask)
         self.viewer.writer.close()  # 确保关闭视频
         super().destroy_node()
 

@@ -1,4 +1,4 @@
-# import seaborn as sns
+# import seaborn as sns #! 这个需要高版本的numpy，搞不懂怎么让ROS用高版本的，所以把调色板直接硬编码字符串了
 import numpy as np
 import imageio.v2 as iio
 import io
@@ -9,6 +9,7 @@ from matplotlib import cm
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.patches import Polygon
 from matplotlib.text import Annotation, Text
+from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from PIL import Image
 
@@ -21,7 +22,7 @@ except:
     from AStar import RoverPath
     from Utils import Setting, Pose2D
 
-from typing import Tuple, List, Union
+from typing import Dict, Tuple, List, Union
 from enum import Enum, auto
 from numpy.typing import NDArray
 
@@ -117,23 +118,24 @@ class MaskViewer:
             if plot_curvature:
                 self.plot_curvature(curvature)
 
-    def plot_path(self, path: RoverPath, **kwargs):
-        if not hasattr(self, "_path_line"):
+    def plot_path(self, path: RoverPath, index: int = 1, **kwargs):
+        if not hasattr(self, "_path_lines"):
+            self._path_lines: Dict[int, Line2D] = {}
+
+        if index not in self._path_lines:
             kwargs.setdefault("color", "green")
-            kwargs.setdefault("linewidth", 2)
-            kwargs.setdefault("label", "Path")
-            self._path_line = self.ax.plot(
+            kwargs.setdefault("linewidth", 2)  #! 这个接口被改失灵了
+            kwargs.setdefault("label", f"Path {index}")
+            self._path_lines[index] = self.ax.plot(
                 path.path_float[:, 0] * Setting.MAP_SCALE,
                 path.path_float[:, 1] * Setting.MAP_SCALE,
                 color=self.palette[6],
                 linewidth=2,
-                label="Path",
             )[0]
         else:
-            self._path_line.set_data(
+            self._path_lines[index].set_data(
                 path.path_float[:, 0] * Setting.MAP_SCALE, path.path_float[:, 1] * Setting.MAP_SCALE
             )
-        # .ax.scatter(path[:, 0], path[:, 1], color="blue", s=10, label="Path Points")
 
     @staticmethod
     def plot_curvature(curvature):
