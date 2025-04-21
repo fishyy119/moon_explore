@@ -2,10 +2,11 @@ import rclpy  # type: ignore
 from rclpy.node import Node  # type: ignore
 from ament_index_python.packages import get_package_share_directory  # type: ignore
 from geometry_msgs.msg import Twist, Pose  # type: ignore
-
+from std_msgs.msg import Float64  # type: ignore
 import sys
 
 sys.path.append("/home/yyy/miniconda3/envs/moon_py310/lib/python3.10/site-packages")
+import csv
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -119,13 +120,33 @@ class ExploreController(Node):
         output_file = str(Path(PROJECT_DIR) / f"Data/video/output_{self.timestamp}.mp4")
         self.viewer = MaskViewer(self.map, output_file)
 
+        # 记录区域覆盖率
+        self.sim_time = None
+        self.create_subscription(Float64, f"simulation_time_1", self.simulation_time_callback, 1)
+        self.csv_file = str(Path(PROJECT_DIR) / f"Data/map/rate_{self.timestamp}.csv")
+        with open(self.csv_file, mode="a", newline="") as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow(
+                [
+                    "time",
+                    "view_grids",
+                ]
+            )
+
         self.rovers: Dict[int, RoverController] = {}
         for i in range(num_rovers):
             self.rovers[i] = RoverController(self, i + 1, self.map, self.viewer)
 
+    def simulation_time_callback(self, msg: Float64) -> None:
+        self.sim_time = msg.data  # 当前仿真时间
+
     def step(self):
         for rover in self.rovers.values():
             rover.step()
+        if self.sim_time is not None:
+            with open(self.csv_file, mode="a", newline="") as f:
+                csv_writer = csv.writer(f)
+                csv_writer.writerow([self.sim_time, np.count_nonzero(self.map.mask)])
 
     def destroy_node(self):
         np.save(str(Path(PROJECT_DIR) / f"Data/map/mask_{self.timestamp}.npy"), self.map.mask)
