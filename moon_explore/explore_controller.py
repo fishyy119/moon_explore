@@ -3,17 +3,21 @@ from rclpy.node import Node  # type: ignore
 from ament_index_python.packages import get_package_share_directory  # type: ignore
 from geometry_msgs.msg import Twist, Pose  # type: ignore
 
-import sys, math, time
+import sys
+
+sys.path.append("/home/yyy/miniconda3/envs/moon_py310/lib/python3.10/site-packages")
 import numpy as np
 from pathlib import Path
+from datetime import datetime
 
-# sys.path.append("/home/yyy/miniconda3/envs/moon_py310/lib/python3.10/site-packages")
 from moon_explore.Utils import Pose2D
 from moon_explore.Map import Map
 from moon_explore.Viewer import MaskViewer
 
 from enum import Enum, auto
 from typing import Callable, Dict, Optional
+
+PROJECT_DIR = "/home/yyy/moon_R2023"
 
 
 class State(Enum):
@@ -64,7 +68,7 @@ class RoverController:
             self.LOG(f"[{self.id}] 重新规划")
             self.map.step()
             self.viewer.update(mode=MaskViewer.UpdateMode.CONTOUR)
-            self.path = self.map.canPoints[0].path
+            self.path = self.map.rovers[self.id - 1].targetPoint.path  # type: ignore
             assert self.path is not None
             self.viewer.plot_path(self.path)
             self.fsm_state = State.DRIVE
@@ -111,7 +115,9 @@ class ExploreController(Node):
         package_share_directory = get_package_share_directory("moon_explore")
         NPY_ROOT = Path(package_share_directory) / "resource"
         self.map = Map(str(NPY_ROOT / "map_passable.npy"))
-        self.viewer = MaskViewer(self.map)
+        timestamp = datetime.now().strftime("%m%d_%H%M%S")
+        output_file = str(Path(PROJECT_DIR) / f"Data/video/output_{timestamp}.mp4")
+        self.viewer = MaskViewer(self.map, output_file)
 
         self.rovers: Dict[int, RoverController] = {}
         for i in range(num_rovers):

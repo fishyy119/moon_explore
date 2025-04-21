@@ -1,5 +1,5 @@
+# import seaborn as sns
 import numpy as np
-import seaborn as sns
 import imageio.v2 as iio
 import io
 import matplotlib.pyplot as plt
@@ -33,10 +33,10 @@ class MaskViewer:
         MOVE = auto()
         CONTOUR = auto()
 
-    def __init__(self, map_instance: Map):
+    def __init__(self, map_instance: Map, output_path: str):
         plt.ion()
 
-        self.writer = iio.get_writer("output.mp4", fps=10)
+        self.writer = iio.get_writer(output_path, fps=10)
         self.buf = io.BytesIO()
 
         self.map = map_instance
@@ -44,7 +44,19 @@ class MaskViewer:
         self.ax.set_xlim(0, 500)
         self.ax.set_ylim(0, 500)
 
-        self.palette = sns.color_palette("colorblind")
+        # self.palette = sns.color_palette("colorblind")
+        self.palette = [
+            "#0173b2",  # blue
+            "#de8f05",  # orange
+            "#029e73",  # green
+            "#d55e00",  # red
+            "#cc78bc",  # purple
+            "#ca9161",  # brown
+            "#fbafe4",  # pink
+            "#949494",  # gray
+            "#ece133",  # yellow
+            "#56b4e9",  # cyan
+        ]
 
         # 颜色条等高（在右边加个子图放颜色条）
         divider = make_axes_locatable(self.ax)
@@ -316,7 +328,7 @@ if __name__ == "__main__":
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=1)
-    viewer = MaskViewer(map)
+    viewer = MaskViewer(map, "output.mp4")
 
     x, y, theta = 27, 25, 90  # 初始位置
     while True:

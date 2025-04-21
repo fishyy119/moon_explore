@@ -1,6 +1,7 @@
 import numpy as np
 import skimage
 import math
+from scipy.ndimage import distance_transform_edt
 from scipy.signal import argrelextrema
 from pathlib import Path
 
@@ -18,9 +19,13 @@ from numpy.typing import NDArray
 
 
 class Map:
-    def __init__(self, map_file, god=False, num_rovers: int = 1) -> None:
+    def __init__(self, map_file, num_rovers: int = 1, god=False, load_mask: NDArray[np.bool_] | None = None) -> None:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)  # True表示已探明
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
+        # 计算距离场，用于舍弃距离障碍物过近的候选点
+        self.distance_ob: NDArray[np.float64] = distance_transform_edt(~self.obstacle_mask)  # type: ignore
+        if load_mask is not None:
+            self.mask = load_mask
         if god:
             self.mask = np.ones_like(self.mask, dtype=np.bool_)
 
@@ -194,11 +199,15 @@ class Map:
             return result
 
         self.canPoints: List[CandidatePoint] = []
-        for contour, _, peaks_idx in self.contours:
+        new_contours: List[Contour] = []
+        for new_contour in self.contours:
+            contour = new_contour.points
+            peaks_idx = new_contour.peaks_idx
             peaks_idx_np = np.array(peaks_idx)
             segment_lengths = peaks_idx_np[1:] - peaks_idx_np[:-1]  # 每段的长度
             seg_anchors = [(start, end) for start, end in zip(peaks_idx[:-1], peaks_idx[1:])]
 
+            cnt = 0
             for seg_idx, (start, end) in enumerate(seg_anchors):
                 seg_len = segment_lengths[seg_idx]
                 if seg_len < 10:
@@ -239,14 +248,23 @@ class Map:
                         if not (
                             x >= 0 and x < self.mask.shape[1] and y >= 0 and y <= self.mask.shape[0] and self.mask[y, x]
                         ):
-                            continue
+                            continue  # 不在可视范围内
+                        if self.distance_ob[y, x] <= 0.8 * Setting.MAP_SCALE * 1.2:
+                            continue  # 距离障碍物过近
                         decay_factor = ANGLE_OFFSET_COS[i]
-                        subseg_factors = [1, 1.5, 2.5, 3.5]
+                        subseg_factors = [1, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
                         self.canPoints.append(
                             CandidatePoint(
                                 p, seg_len / num_subsegments * decay_factor * subseg_factors[num_subsegments - 1]
                             )
                         )
+                        cnt += 1
+                # for mid in mid_point_idxs:
+            # for seg_idx, (start, end) in enumerate(seg_anchors):
+            if cnt != 0:
+                new_contours.append(new_contour)
+        # for new_contour in self.contours:
+        self.contours = new_contours
 
     def assign_points_to_rovers(self, index: int = 0) -> None:
         """
@@ -296,7 +314,7 @@ if __name__ == "__main__":
     N = 2
     NPY_ROOT = Path(__file__).parent.parent / "resource"
     map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=2)
-    viewer = MaskViewer(map)
+    viewer = MaskViewer(map, "output.mp4")
 
     # if True:
     #     test_mask()

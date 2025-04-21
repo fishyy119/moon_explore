@@ -40,6 +40,9 @@ class AStarPlanner:
 
         # 计算距离场，算出来两个不同安全度的膨胀
         distance_map: NDArray[np.float64] = distance_transform_edt(~visible_ob)  # type: ignore
+        self.euclidean_dilated_danger = (
+            distance_map <= rr * Setting.MAP_SCALE * 0.01
+        )  # 逃离用的，不然巡视器被包含进新探索的障碍中？
         self.euclidean_dilated_least = distance_map <= rr * Setting.MAP_SCALE * 1.2  # 最小的膨胀，剪枝时使用这个
         self.euclidean_dilated_base = distance_map <= rr * Setting.MAP_SCALE * 1.5  # 这两个用于规划
         self.euclidean_dilated_safe = distance_map <= rr * Setting.MAP_SCALE * 2.0
@@ -98,6 +101,17 @@ class AStarPlanner:
             Optional[RoverPath]: (N, 2) 存储路径上的各点坐标(单位m)，还有一个Pose2D的列表
         """
         self.obstacle_map: NDArray[np.bool_] = self.euclidean_dilated_safe | ~mask
+        start_node = self.Node(self.calc_xy_index(sx), self.calc_xy_index(sy), 0.0, -1)
+        if not self.verify_node(start_node):
+            self.obstacle_map = self.euclidean_dilated_base | ~mask
+            print("start in ob")
+        if not self.verify_node(start_node):
+            self.obstacle_map = self.euclidean_dilated_least | ~mask
+            print("start in ob_base")
+        if not self.verify_node(start_node):
+            self.obstacle_map = self.euclidean_dilated_danger | ~mask
+            print("start in ob_least")
+
         self.goal = goal  # 最后生成的路径要记录这个，里面有个偏航角
         gx, gy = goal.x, goal.y
         result = self.plan_once(sx, sy, gx, gy)
@@ -310,7 +324,7 @@ def main():
     path = planner.planning(2, 2, Pose2D(12.5, 8, 0), map.mask)
     print(f"{time.time() - start:.4f} sec")
 
-    viewer = MaskViewer(map)
+    viewer = MaskViewer(map, "output.mp4")
     viewer.update()
     if path is None:
         print("Cannot find path")

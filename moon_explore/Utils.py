@@ -31,10 +31,10 @@ class Setting:
         L_S = 0.1  # 最大线速度 m/s
         A_S = 0.1  # 最大角速度 rad/s
         BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
-        ALPHA = -np.log(0.9) / BASE_TIME
+        ALPHA = -np.log(0.8) / BASE_TIME
         # print(ALPHA)
 
-        BETA = 0.2
+        BETA = 0.4
         T_SEG = 100 * BETA
         T_PATH = 100 * (1 - BETA)
 
