@@ -22,6 +22,7 @@ class Rover:
         self.rover_pose = Pose2D(0, 0, 0)
         self.targetPoint: CandidatePoint | None = None
         self.targetPoint_mask: NDArray[np.bool_] | None = None  # 其他巡视器计算重叠衰减时使用，在分配目标的时候就计算
+        self.switch: bool = False  # 设置超过一定探索比例后的切换标示量
 
     def cal_r_max(
         self,
@@ -269,10 +270,19 @@ class Rover:
         max_seg_len = np.max(seg_lens)
 
         # * 4.计算分数
+        # 高于一定探索比例切换为就近探索
+        if not self.switch:
+            if Setting.eval.ENABLED_SWITCH:
+                x, y = self.mask.shape
+                rate = np.count_nonzero(self.mask) / x / y
+                if rate > Setting.eval.RATIO_THRESHOLD:
+                    self.switch = True
+                    Setting.eval.BETA = Setting.eval.NEW_BETA
+
+        # 要等到下一轮，才会用新的beta计算系数
         score_segs = T_SEG * seg_lens / max_seg_len
         score_paths = T_PATH * path_costs
         scores = score_segs + score_paths
-        # scores = seg_lens / path_costs
 
         for point, score in zip(self.canPoints, scores):
             point.score = score

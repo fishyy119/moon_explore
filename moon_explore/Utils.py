@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
 from numpy.typing import NDArray
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class Setting:
@@ -25,18 +25,51 @@ class Setting:
         ANGLE_OFFSET_RAD = np.radians(ANGLE_OFFSET_DEG)
         ANGLE_OFFSET_COS = np.cos(ANGLE_OFFSET_RAD)
 
-    class eval:
-        D_M = 4  # 基准时间：直线距离m
-        A_D = 30  # 基准时间：旋转角度deg
-        L_S = 0.1  # 最大线速度 m/s
-        A_S = 0.1  # 最大角速度 rad/s
-        BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
-        ALPHA = -np.log(0.8) / BASE_TIME
-        # print(ALPHA)
+    @dataclass
+    class Eval:
+        RATIO_THRESHOLD: float = 0.4  # 当探索比例超过这个值切换策略
+        ENABLED_SWITCH: bool = True  # 开关项，控制是否开启
+        NEW_BETA: float = 0.1
 
-        BETA = 0.4
-        T_SEG = 100 * BETA
-        T_PATH = 100 * (1 - BETA)
+        D_M: float = 4  # 基准时间：直线距离m
+        A_D: float = 30  # 基准时间：旋转角度deg
+        L_S: float = 0.1  # 最大线速度 m/s
+        A_S: float = 0.1  # 最大角速度 rad/s
+
+        BETA: float = 0.4
+
+        BASE_TIME: float = field(init=False)
+        ALPHA: float = field(init=False)
+
+        def __post_init__(self):
+            self.BASE_TIME = self.D_M / self.L_S + np.deg2rad(self.A_D) / self.A_S
+            self.ALPHA = -np.log(0.8) / self.BASE_TIME
+
+        @property
+        def T_SEG(self) -> float:
+            return 100 * self.BETA
+
+        @property
+        def T_PATH(self) -> float:
+            return 100 * (1 - self.BETA)
+
+    eval = Eval()
+
+    # class eval:
+    #     RATIO_THRESHOLD = 0.4  # 当探索比例超过这个值切换策略
+    #     ENABLED_SWITCH = True  # 开关项，控制是否开启
+
+    #     D_M = 4  # 基准时间：直线距离m
+    #     A_D = 30  # 基准时间：旋转角度deg
+    #     L_S = 0.1  # 最大线速度 m/s
+    #     A_S = 0.1  # 最大角速度 rad/s
+    #     BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
+    #     ALPHA = -np.log(0.8) / BASE_TIME
+    #     # print(ALPHA)
+
+    #     BETA = 0.4
+    #     T_SEG = 100 * BETA
+    #     T_PATH = 100 * (1 - BETA)
 
 
 class PoseDiff(NamedTuple):

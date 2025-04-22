@@ -102,6 +102,9 @@ class RoverController:
                 twist.angular.z = max(-0.1, min(0.1, 0.5 * yaw_error))
                 # self.LOG(f"ROTATE: {self.pose_now.yaw_deg360:.2f} -> {self.current_target.yaw_deg360:.2f}")
 
+        factor = 1.5
+        twist.angular.z *= factor
+        twist.linear.x *= factor
         self.publisher.publish(twist)
 
 
