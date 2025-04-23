@@ -118,7 +118,7 @@ class ExploreController(Node):
 
         package_share_directory = get_package_share_directory("moon_explore")
         NPY_ROOT = Path(package_share_directory) / "resource"
-        self.map = Map(str(NPY_ROOT / "map_passable.npy"), num_rovers=num_rovers)
+        self.map = Map(str(NPY_ROOT / "map_passable.npy"), str(NPY_ROOT / "map_divide.npy"), num_rovers=num_rovers)
         self.timestamp = datetime.now().strftime("%m%d_%H%M%S")
         output_file = str(Path(PROJECT_DIR) / f"Data/video/output_{self.timestamp}.mp4")
         self.viewer = MaskViewer(self.map, output_file)

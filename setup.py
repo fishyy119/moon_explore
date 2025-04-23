@@ -4,7 +4,7 @@ package_name = "moon_explore"
 
 data_files = []
 data_files.append(("share/ament_index/resource_index/packages", ["resource/" + package_name]))
-data_files.append(("share/" + package_name + "/resource", ["resource/map_passable.npy"]))
+data_files.append(("share/" + package_name + "/resource", ["resource/map_passable.npy", "resource/map_divide.npy"]))
 data_files.append(("share/" + package_name, ["package.xml", "GLOBAL.py"]))
 
 

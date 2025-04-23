@@ -19,9 +19,12 @@ from numpy.typing import NDArray
 
 
 class Map:
-    def __init__(self, map_file, num_rovers: int = 1, god=False, load_mask: NDArray[np.bool_] | None = None) -> None:
+    def __init__(
+        self, map_file, map_divide, num_rovers: int = 1, god=False, load_mask: NDArray[np.bool_] | None = None
+    ) -> None:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)  # True表示已探明
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
+        self.map_divide: NDArray[np.int32] = np.load(map_divide)
         # 计算距离场，用于舍弃距离障碍物过近的候选点
         self.distance_ob: NDArray[np.float64] = distance_transform_edt(~self.obstacle_mask)  # type: ignore
         if load_mask is not None:
@@ -210,7 +213,9 @@ class Map:
             cnt = 0
             for seg_idx, (start, end) in enumerate(seg_anchors):
                 seg_len = segment_lengths[seg_idx]
-                if seg_len < 10:
+                x1, y1 = int(contour[start, 0]), int(contour[start, 1])
+                x2, y2 = int(contour[end, 0]), int(contour[end, 1])
+                if math.hypot(y1 - y2, x1 - x2) < 15:
                     continue  # * 拒绝很短的空间内出现的多个点
 
                 num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))
@@ -249,7 +254,7 @@ class Map:
                             x >= 0 and x < self.mask.shape[1] and y >= 0 and y < self.mask.shape[0] and self.mask[y, x]
                         ):
                             continue  # 不在可视范围内
-                        if self.distance_ob[y, x] <= 0.8 * Setting.MAP_SCALE * 1.2:
+                        if self.distance_ob[y, x] <= 0.8 * Setting.MAP_SCALE * 1.5:
                             continue  # 距离障碍物过近
                         decay_factor = ANGLE_OFFSET_COS[i]
                         subseg_factors = [1, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
@@ -269,17 +274,30 @@ class Map:
     def assign_points_to_rovers(self, index: int = 0) -> None:
         """
         将候选点分配给不同的巡视器，基于距离和当前巡视器的位置。
+        多巡视器：仅修改`self.rover_assignments`对应index的列表，其他区域的候选点舍弃
+        单巡视器：按照预设区域划分，将候选点分配到三个列表中
         """
-        rover_positions = [rover.rover_pose for rover in self.rovers]
-        self.rover_assignments[index] = []
+        if len(self.rovers) == 1:
+            # 强制单巡视器在探索完一个子区域后再前往下一个区域
+            self.rover_assignments = [[] for _ in range(3)]
+            for point in self.canPoints:
+                x, y = int(point.pose.x * Setting.MAP_SCALE), int(point.pose.y * Setting.MAP_SCALE)
+                sub_area: int = self.map_divide[y, x]
+                self.rover_assignments[sub_area].append(point)
 
-        for point in self.canPoints:
-            distances = [point.pose - rover_pose for rover_pose in rover_positions]
-            closest_rover = np.argmin(distances)
-            if closest_rover == index:
-                self.rover_assignments[index].append(point)
+        else:
+            rover_positions = [rover.rover_pose for rover in self.rovers]
+            self.rover_assignments[index] = []
+
+            for point in self.canPoints:
+                distances = [point.pose - rover_pose for rover_pose in rover_positions]
+                closest_rover = np.argmin(distances)
+                if closest_rover == index:
+                    self.rover_assignments[index].append(point)
 
     def step(self, index: int = 0) -> None:
+        self.rovers[index].targetPoint = None
+        self.rovers[index].targetPoint_mask = None
         self.contours: List[Contour] = []
         for contour in self.get_contours():
             curvature = self.curvature_discrete(contour)
@@ -289,11 +307,26 @@ class Map:
         self.cal_canPose()
         self.assign_points_to_rovers(index)
         # * 这些 canPoints 都是传递的引用，所以 Rover 那边进行的赋值可以在 Map 这里访问到
-        others_target = [r.targetPoint for r in self.rovers if r.targetPoint is not None]
-        others_target_mask = [r.targetPoint_mask for r in self.rovers if r.targetPoint_mask is not None]
-        self.rovers[index].evaluate_candidate_points(self.rover_assignments[index], others_target, others_target_mask)
-        # * Viewer 需要访问这个变量，除了idx对应的巡视器点被更新了，其他的仍然不变（信息被保存在了assignments中）
-        self.canPoints = [point for assignment in self.rover_assignments for point in assignment]
+        if len(self.rovers) == 1:
+            if True:
+                self.rovers[index].evaluate_candidate_points(self.canPoints, [], [])
+            else:
+                rover = self.rovers[0]
+                x, y = int(rover.rover_pose.x * Setting.MAP_SCALE), int(rover.rover_pose.y * Setting.MAP_SCALE)
+                sub_area = self.map_divide[y, x]
+                if len(self.rover_assignments[sub_area]) <= 1:
+                    self.rovers[index].evaluate_candidate_points(self.canPoints, [], [])
+                else:
+                    self.rovers[index].evaluate_candidate_points(self.rover_assignments[sub_area], [], [])
+                    self.canPoints = self.rover_assignments[sub_area]
+        else:
+            others_target = [r.targetPoint for r in self.rovers if r.targetPoint is not None]
+            others_target_mask = [r.targetPoint_mask for r in self.rovers if r.targetPoint_mask is not None]
+            self.rovers[index].evaluate_candidate_points(
+                self.rover_assignments[index], others_target, others_target_mask
+            )
+            # * Viewer 需要访问这个变量，除了idx对应的巡视器点被更新了，其他的仍然不变（信息被保存在了assignments中）
+            self.canPoints = [point for assignment in self.rover_assignments for point in assignment]
 
 
 # def test_mask():
@@ -311,17 +344,17 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     timer = MyTimer()
-    N = 2
+    N = 1
     NPY_ROOT = Path(__file__).parent.parent / "resource"
-    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=2)
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), map_divide=str(NPY_ROOT / "map_divide.npy"), num_rovers=N)
     viewer = MaskViewer(map, "output.mp4")
 
     # if True:
     #     test_mask()
     #     exit(0)
 
-    map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True), 0 % N)
-    map.rover_init(Pose2D(28, 25.2472, 270, deg=True), 1 % N)
+    # map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True), 0 % N)
+    map.rover_init(Pose2D(25, 8, 270, deg=True), 1 % N)
     # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
     timer.checkpoint("可视计算")
@@ -331,7 +364,7 @@ if __name__ == "__main__":
 
     viewer.update()
     viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=False)
-    viewer.plot_path(map.rovers[1].targetPoint.path)  # type: ignore
+    # viewer.plot_path(map.rovers[1].targetPoint.path)  # type: ignore
 
     plt.ioff()
     plt.show()

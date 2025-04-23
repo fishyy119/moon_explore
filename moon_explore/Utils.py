@@ -28,7 +28,7 @@ class Setting:
     @dataclass
     class Eval:
         RATIO_THRESHOLD: float = 0.4  # 当探索比例超过这个值切换策略
-        ENABLED_SWITCH: bool = True  # 开关项，控制是否开启
+        ENABLED_SWITCH: bool = False  # 开关项，控制是否开启
         NEW_BETA: float = 0.1
 
         D_M: float = 4  # 基准时间：直线距离m
@@ -36,7 +36,7 @@ class Setting:
         L_S: float = 0.1  # 最大线速度 m/s
         A_S: float = 0.1  # 最大角速度 rad/s
 
-        BETA: float = 0.4
+        BETA: float = 0.0
 
         BASE_TIME: float = field(init=False)
         ALPHA: float = field(init=False)

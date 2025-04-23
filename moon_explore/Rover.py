@@ -262,6 +262,7 @@ class Rover:
                 cost *= 2
 
             point.path_cost = math.exp(-ALPHA * cost)
+            point.path = None
             # point.path_cost = cost
         path_costs = np.array([p.path_cost for p in self.canPoints])
 
@@ -288,12 +289,33 @@ class Rover:
             point.score = score
 
         # * 5.排序，随后规划真正可行的路径
+        true_path_cnt = 0
         self.canPoints.sort(key=lambda p: p.score, reverse=True)
         for p in self.canPoints:
             p.path = self.planner.planning(self.rover_pose.x, self.rover_pose.y, p.pose, self.mask)
             if p.path is not None:
-                break
+                true_path_cnt += 1
+                if true_path_cnt >= 4:
+                    break
         self.canPoints = [point for point in self.canPoints if point.path is not None]
-        self.targetPoint = self.canPoints[0]
+        min_canPoints = self.canPoints[:true_path_cnt]
+        for point in min_canPoints:
+            assert point.path is not None
+            path = point.path.path_pose
+
+            p_last = self.rover_pose
+            cost = 0
+            for p in path:
+                diff = p ^ p_last
+                p_last = p
+
+                time = 2 * diff.yaw_diff_rad / 0.1 + diff.dist / 0.1
+                cost += time
+
+            path_cost = math.exp(-ALPHA * cost)
+            point.score = T_SEG * point.seg_len / max_seg_len + T_PATH * path_cost
+        # 规划四个真的路径，再重新评估一下路径成本
+        min_canPoints.sort(key=lambda p: p.score, reverse=True)
+        self.targetPoint = min_canPoints[0]
         self.targetPoint_mask = self.generate_sector_mask_non_ob(self.targetPoint.pose)
         # 这里提前计算好预估的遮罩，其他巡视器衰减时直接取用

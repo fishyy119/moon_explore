@@ -41,10 +41,14 @@ def plot_csv_files(csvs: List[CSVLine]):
                 print(f"跳过 {file_path}，列数不足两列。")
                 continue
 
-            x = df.iloc[:, 0][::2]
+            x = df.iloc[:, 0][::2]  # ? 不知道为什么，时间戳总是两个两个重复，也有同一时间戳对应不同y的情况，但很少
             x = x.astype(float).round(1)
             y = df.iloc[:, 1][::2]
             y = y.astype(float) / 501 / 501 * 100
+            # 设定的停止条件
+            valid_indices = y <= 50
+            x = x[valid_indices]
+            y = y[valid_indices]
             plt.plot(x, y, label=label, linewidth=2)
         except Exception as e:
             print(f"读取文件 {file_path} 时出错：{e}")
@@ -61,9 +65,13 @@ def plot_csv_files(csvs: List[CSVLine]):
 if __name__ == "__main__":
     # 速度指令倍数 / beta / alpha求取使用的比例值 / 达到一定比例的比例与新beta
     csvs: List[CSVLine] = csv_list(
-        ("rate_0422_091532.csv", "1.5/b=0.4/a=0.8"),
         ("rate_0422_111633.csv", "1.5/b=0/a=0.8"),
-        ("rate_0422_143957.csv", "1.5/b=0.4/a=0.8/new_b=40/0"),
+        ("rate_0423_171945.csv", "1.5/b=0/a=0.8 - a"),
+        # ("rate_0423_133631.csv", "1.5/b=0/a=0.8 - 2"),
+        ("rate_0423_154438.csv", "1.5/b=0.3/a=0.8"),
+        ("rate_0423_163538.csv", "1.5/b=0.3/a=0.8 - a"),
+        ("rate_0422_091532.csv", "1.5/b=0.4/a=0.8"),
+        # ("rate_0422_143957.csv", "1.5/b=0.4/a=0.8/new_b=40/0"),
         ("rate_0422_162350.csv", "1.5/b=0.4/a=0.8/new_b=40/0.1"),
     )
 
