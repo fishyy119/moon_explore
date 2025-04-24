@@ -13,6 +13,7 @@ from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from PIL import Image
 
+
 try:
     from .Map import Map
     from .AStar import RoverPath
@@ -240,7 +241,7 @@ class MaskViewer:
             perp_vec = perp_vec / np.linalg.norm(perp_vec)
 
             # 用于延长中垂线（你也可以设为任务区边界大小）
-            length = 300
+            length = 700
             line_start = mid - perp_vec * length
             line_end = mid + perp_vec * length
 
@@ -329,7 +330,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
-    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), num_rovers=1)
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), map_divide=str(NPY_ROOT / "map_divide.npy"), num_rovers=1)
     viewer = MaskViewer(map, "output.mp4")
 
     x, y, theta = 27, 25, 90  # 初始位置

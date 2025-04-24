@@ -215,7 +215,7 @@ class Map:
                 seg_len = segment_lengths[seg_idx]
                 x1, y1 = int(contour[start, 0]), int(contour[start, 1])
                 x2, y2 = int(contour[end, 0]), int(contour[end, 1])
-                if math.hypot(y1 - y2, x1 - x2) < 15:
+                if math.hypot(y1 - y2, x1 - x2) < 10:
                     continue  # * 拒绝很短的空间内出现的多个点
 
                 num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))

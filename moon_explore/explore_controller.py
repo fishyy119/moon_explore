@@ -26,6 +26,7 @@ class State(Enum):
     STOP = auto()  # 停止，进行规划
     ROTATE = auto()  # 旋转，对齐直线轨迹
     DRIVE = auto()  # 直行，内部也有反馈式方向微调
+    OVER = auto()
 
 
 class RoverController:
@@ -39,7 +40,9 @@ class RoverController:
         self.last_dist = 1000
 
         self.LOG = lambda msg: self.node.get_logger().info(str(msg))
-        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}", self.robot_pose_callback, 10)
+        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_true", self.robot_pose_callback, 10)
+        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_slam", self.robot_pose_callback, 10)
+        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}", self.robot_pose_callback, 10)
         self.publisher = node.create_publisher(Twist, f"cmd_vel_{rover_id}", 10)
 
     def robot_pose_callback(self, msg: Pose):
@@ -69,6 +72,12 @@ class RoverController:
             self.LOG(f"[{self.id}] 重新规划")
             self.map.step(self.id - 1)
             self.viewer.update(mode=MaskViewer.UpdateMode.CONTOUR)
+            if (
+                self.map.rovers[self.id - 1].targetPoint is None
+                or self.map.rovers[self.id - 1].targetPoint.path is None  # type: ignore
+            ):
+                self.fsm_state = State.OVER
+                return
             self.path = self.map.rovers[self.id - 1].targetPoint.path  # type: ignore
             assert self.path is not None
             self.viewer.plot_path(self.path, index=self.id)
@@ -101,6 +110,10 @@ class RoverController:
             else:
                 twist.angular.z = max(-0.1, min(0.1, 0.5 * yaw_error))
                 # self.LOG(f"ROTATE: {self.pose_now.yaw_deg360:.2f} -> {self.current_target.yaw_deg360:.2f}")
+
+        elif m(State.OVER):
+            twist.angular.z = 0.0
+            twist.linear.x = 0.0
 
         factor = 1.5
         twist.angular.z *= factor
@@ -144,6 +157,8 @@ class ExploreController(Node):
         self.sim_time = msg.data  # 当前仿真时间
 
     def step(self):
+        # pass
+
         for rover in self.rovers.values():
             rover.step()
         if self.sim_time is not None:

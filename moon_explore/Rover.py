@@ -218,6 +218,9 @@ class Rover:
         ALPHA = Setting.eval.ALPHA
         T_SEG = Setting.eval.T_SEG
         T_PATH = Setting.eval.T_PATH
+        if len(canPoints) == 0:
+            self.targetPoint = None
+            return
         self.canPoints = canPoints
         # * 0.对于其他巡视器目标附近的点，衰减其信息量
         others_union = np.zeros_like(self.mask)
