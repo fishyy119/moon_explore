@@ -1,79 +1,29 @@
 import matplotlib.pyplot as plt
-import pandas as pd
-from pathlib import Path
+from plot_utils import RateCSV, plot_rate_csv
 
-from typing import List, Tuple
-from dataclasses import dataclass
-
-CSV_ROOT = Path("/home/yyy/moon_R2023/Data/map")
+from typing import List
 
 
-@dataclass
-class CSVLine:
-    file: Path | str
-    label: str | None = None
+if __name__ == "__main__":
+    csvs: List[RateCSV] = [
+        RateCSV("rate_0422_111633.csv", "1.5/b=0/a=0.8"),
+        # RateCSV("rate_0423_171945.csv", "1.5/b=0/a=0.8 - a"),
+        # RateCSV("rate_0423_133631.csv", "1.5/b=0/a=0.8 - 2"),
+        # RateCSV("rate_0423_154438.csv", "1.5/b=0.3/a=0.8"),
+        # RateCSV("rate_0423_163538.csv", "1.5/b=0.3/a=0.8 - a"),
+        RateCSV("rate_0422_091532.csv", "1.5/b=0.4/a=0.8"),
+        # RateCSV("rate_0422_143957.csv", "1.5/b=0.4/a=0.8/new_b=40/0"), # new_b 40/0
+        RateCSV("rate_0422_162350.csv", "1.5/b=0.4/a=0.8/new_b=40/0.1"),  # new_b 40/0.1
+        RateCSV("rate_0424_162835.csv", "1.5/b=0.4/a=0.8/double"),
+    ]
 
-    def __post_init__(self):
-        self.file = CSV_ROOT / self.file
-        if self.label is None:
-            self.label = self.file.stem
-
-
-def csv_list(*args: Tuple[str] | Tuple[str, str]) -> List[CSVLine]:
-    lines = []
-    for item in args:
-        if len(item) == 1:
-            lines.append(CSVLine(file=item[0]))
-        else:
-            file, label = item
-            lines.append(CSVLine(file=file, label=label))
-    return lines
-
-
-def plot_csv_files(csvs: List[CSVLine]):
-    plt.figure(figsize=(10, 6))
-
-    for csv_line in csvs:
-        file_path, label = csv_line.file, csv_line.label
-        try:
-            df = pd.read_csv(file_path)
-            if df.shape[1] < 2:
-                print(f"跳过 {file_path}，列数不足两列。")
-                continue
-
-            x = df.iloc[:, 0][::2]  # ? 不知道为什么，时间戳总是两个两个重复，也有同一时间戳对应不同y的情况，但很少
-            x = x.astype(float).round(1)
-            y = df.iloc[:, 1][::2]
-            y = y.astype(float) / 501 / 501 * 100
-            # 设定的停止条件
-            valid_indices = y <= 50
-            x = x[valid_indices]
-            y = y[valid_indices]
-            plt.plot(x, y, label=label, linewidth=2)
-        except Exception as e:
-            print(f"读取文件 {file_path} 时出错：{e}")
+    fig, ax = plt.subplots()
+    for csv in csvs:
+        plot_rate_csv(csv, ax)
 
     plt.xlabel("Time (s)")
     plt.ylabel("Rate (%)")
     plt.legend()
     plt.grid(True, axis="both")
     plt.tight_layout()
-
     plt.show()
-
-
-if __name__ == "__main__":
-    # 速度指令倍数 / beta / alpha求取使用的比例值 / 达到一定比例的比例与新beta
-    csvs: List[CSVLine] = csv_list(
-        ("rate_0422_111633.csv", "1.5/b=0/a=0.8"),
-        # ("rate_0423_171945.csv", "1.5/b=0/a=0.8 - a"),
-        # ("rate_0423_133631.csv", "1.5/b=0/a=0.8 - 2"),
-        # ("rate_0423_154438.csv", "1.5/b=0.3/a=0.8"),
-        # ("rate_0423_163538.csv", "1.5/b=0.3/a=0.8 - a"),
-        ("rate_0422_091532.csv", "1.5/b=0.4/a=0.8"),
-        # ("rate_0422_143957.csv", "1.5/b=0.4/a=0.8/new_b=40/0"),
-        ("rate_0422_162350.csv", "1.5/b=0.4/a=0.8/new_b=40/0.1"),
-        ("rate_0424_162835.csv", "1.5/b=0.4/a=0.8/double"),
-    )
-
-    plot_csv_files(csvs)
