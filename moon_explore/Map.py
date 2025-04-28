@@ -203,9 +203,9 @@ class Map:
 
         self.canPoints: List[CandidatePoint] = []
         new_contours: List[Contour] = []
-        for new_contour in self.contours:
-            contour = new_contour.points
-            peaks_idx = new_contour.peaks_idx
+        for this_contour in self.contours:
+            contour = this_contour.points
+            peaks_idx = this_contour.peaks_idx
             peaks_idx_np = np.array(peaks_idx)
             segment_lengths = peaks_idx_np[1:] - peaks_idx_np[:-1]  # 每段的长度
             seg_anchors = [(start, end) for start, end in zip(peaks_idx[:-1], peaks_idx[1:])]
@@ -221,6 +221,7 @@ class Map:
                 num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))
                 split_point_idxs = np.linspace(start, end, 2 * num_subsegments + 1, dtype=int)
                 mid_point_idxs = split_point_idxs[1::2]  # 取出split_points的偶数位（1开头）
+                peaks_idx.extend(split_point_idxs[0::2])  # 把过长线段的分割点也加进去用于画图
 
                 for mid in mid_point_idxs:
                     x, y = int(contour[mid, 0]), int(contour[mid, 1])  # 中点坐标
@@ -267,6 +268,7 @@ class Map:
                 # for mid in mid_point_idxs:
             # for seg_idx, (start, end) in enumerate(seg_anchors):
             if cnt != 0:
+                new_contour = Contour(this_contour.points, this_contour.curvature, peaks_idx)
                 new_contours.append(new_contour)
         # for new_contour in self.contours:
         self.contours = new_contours
@@ -353,8 +355,8 @@ if __name__ == "__main__":
     #     test_mask()
     #     exit(0)
 
-    # map.rover_init(Pose2D(27, 25.2472, 88.6, deg=True), 0 % N)
-    map.rover_init(Pose2D(25, 8, 270, deg=True), 1 % N)
+    map.rover_init(Pose2D(27, 25.2472, 0, deg=True), 0 % N)
+    # map.rover_init(Pose2D(25, 8, 270, deg=True), 1 % N)
     # map.rover_move(Pose2D(26, 29, 0.7))
     # map.rover_move(Pose2D(20, 20, 3))
     timer.checkpoint("可视计算")
@@ -363,6 +365,7 @@ if __name__ == "__main__":
     timer.checkpoint("路径规划")
 
     viewer.update()
+    # viewer.plot_contours(show_peak=True)
     viewer.update(mode=viewer.UpdateMode.CONTOUR, show_score_text=False)
     # viewer.plot_path(map.rovers[1].targetPoint.path)  # type: ignore
 

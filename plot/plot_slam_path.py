@@ -6,8 +6,8 @@ from plot_utils import *
 SUB = Path("20250425_155457_bag1")  # xyz: 0.05, 0.05, 0.01
 SUB = Path("20250425_165849")  # 将探索模块接入slam
 
-csv1 = RecordCSV(SUB / "record_1.csv", "truth")
-txt1 = RecordSLAM(csv1, SUB / "slam_ab.txt", "slam_ab")
+csv1 = RecordCSV(SUB / "record_1.csv", "实际运动路径")
+txt1 = RecordSLAM(csv1, SUB / "slam_ab.txt", "SLAM估计路径")
 # txt2 = RecordSLAM(csv1, SUB / "slam_no.txt", "slam_no_ab")
 
 
@@ -17,7 +17,9 @@ plot_path_map(csv1, ax)
 plot_path_map(txt1, ax)
 # plot_path_map(txt2, ax)
 
+plt.rcParams["font.sans-serif"] = ["SimSun"]  # 设置中文字体为宋体
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams.update({"font.size": 10})  # 设置字体大小
 
-plt.legend()
 plt.tight_layout()
 plt.show()

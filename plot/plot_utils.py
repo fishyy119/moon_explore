@@ -277,7 +277,15 @@ def plot_rate_csv(csv: RateCSV, ax: Axes):
 
 
 def plot_path_map(csv: RecordBase, ax: Axes):
-    plt.plot(csv.x_map, csv.y_map, label=csv.label, linewidth=2)
+    ax.plot(csv.x_map, csv.y_map, label=csv.label, linewidth=2)
+
+    # 添加图例
+    legend = ax.legend(loc="best")
+
+    # 设置 legend 背景为不透明白色
+    legend.get_frame().set_facecolor("white")  # 设置为白底
+    legend.get_frame().set_alpha(1.0)  # 设置完全不透明
+    legend.get_frame().set_edgecolor("black")  # 可选：边框变为黑色
 
 
 def plot_ob_mask(mask: NDArray[np.bool_], ax: Axes, alpha: float = 1):

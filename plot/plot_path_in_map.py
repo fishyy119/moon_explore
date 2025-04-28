@@ -8,9 +8,9 @@ if __name__ == "__main__":
     # 速度指令倍数 / beta / alpha求取使用的比例值
     csvs: List[RecordCSV] = [
         # RecordCSV("20250422_111632/record_1.csv", "1.5/b=0/a=0.8"),
-        # RecordCSV("20250422_091531/record_1.csv", "1.5/b=0.4/a=0.8"),
-        RecordCSV("20250424_162834/record_1.csv", "rover1"),
-        RecordCSV("20250424_162834/record_2.csv", "rover2"),
+        RecordCSV("20250422_091532/record_1.csv", "rover"),  # "1.5/b=0.4/a=0.8"
+        # RecordCSV("20250424_162834/record_1.csv", "rover1"),
+        # RecordCSV("20250424_162834/record_2.csv", "rover2"),
     ]
 
     fig, ax = plt.subplots()

@@ -36,7 +36,7 @@ class Setting:
         L_S: float = 0.1  # 最大线速度 m/s
         A_S: float = 0.1  # 最大角速度 rad/s
 
-        BETA: float = 0.0
+        BETA: float = 0.4
 
         BASE_TIME: float = field(init=False)
         ALPHA: float = field(init=False)
