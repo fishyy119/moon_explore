@@ -40,8 +40,8 @@ class RoverController:
         self.last_dist = 1000
 
         self.LOG = lambda msg: self.node.get_logger().info(str(msg))
-        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_true", self.robot_pose_callback, 10)
-        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_slam", self.robot_pose_callback, 10)
+        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_true", self.robot_pose_callback, 10)
+        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_slam", self.robot_pose_callback, 10)
         # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}", self.robot_pose_callback, 10)
         self.publisher = node.create_publisher(Twist, f"cmd_vel_{rover_id}", 10)
 
@@ -115,7 +115,7 @@ class RoverController:
             twist.angular.z = 0.0
             twist.linear.x = 0.0
 
-        factor = 1.5
+        factor = 1.0
         twist.angular.z *= factor
         twist.linear.x *= factor
         self.publisher.publish(twist)
