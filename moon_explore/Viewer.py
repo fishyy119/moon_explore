@@ -45,6 +45,7 @@ class MaskViewer:
         self.fig, self.ax = plt.subplots()
         self.ax.set_xlim(0, 500)
         self.ax.set_ylim(0, 500)
+        self.ax.axis("off")
 
         # self.palette = sns.color_palette("colorblind")
         self.palette = [
@@ -301,7 +302,7 @@ class MaskViewer:
                 self._pose2d_colorbar.update_normal(sm)  # 重新绑定新值
             else:
                 self._pose2d_colorbar = self.fig.colorbar(sm, cax=self.cax)
-                self._pose2d_colorbar.set_label("Score", rotation=270, labelpad=15)
+                self._pose2d_colorbar.set_label("Score", labelpad=15)
 
         self.show()
 

@@ -14,7 +14,7 @@ if __name__ == "__main__":
     ]
 
     fig, ax = plt.subplots()
-    plot_ob_mask(MAP_PASSABLE, ax, 1)
+    plot_binary_map(MAP_PASSABLE, ax, 1)
     for csv in csvs:
         plot_path_map(csv, ax)
 
