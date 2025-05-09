@@ -7,6 +7,7 @@ author: Atsushi Sakai(@Atsushi_twi)
 
 See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
 
+修改内容：多次规划与路径剪枝
 """
 
 import math
@@ -318,7 +319,7 @@ def main():
     import time
 
     NPY_ROOT = Path(__file__).parent.parent / "resource"
-    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), god=True)
+    map = Map(map_file=str(NPY_ROOT / "map_passable.npy"), map_divide=str(NPY_ROOT / "map_divide.npy"), god=True)
     planner = AStarPlanner(0.8, map.obstacle_mask)
     start = time.time()
     path = planner.planning(2, 2, Pose2D(12.5, 8, 0), map.mask)

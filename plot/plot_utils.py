@@ -22,6 +22,9 @@ from numpy.typing import NDArray
 
 ColorType = Union[Tuple[float, float, float, float], Tuple[float, float, float], str]
 
+import sys
+
+sys.path.append(str(Path(__file__).parent.parent))
 from moon_explore.Utils import *
 
 
@@ -60,12 +63,13 @@ class RateCSV:
         label: str | None = None,
         threshold: float = 49.1,
         root: Path = _get_default_root("RateCSV"),
+        factor: float = 1,  # 忘了修改速度指令的倍数，在这里修正
     ):
         self.file = root / file
         self.label = label or self.file.stem
         self._data = pd.read_csv(self.file).astype(float)
         self.rate = self._data["view_grids"] / 501 / 501 * 100 / threshold * 100
-        self.time = self._data["time"].round(1)
+        self.time = self._data["time"].round(1) / factor
 
         self.valid_indices = self.rate <= 100
 
@@ -269,17 +273,17 @@ class RecordSLAM(RecordBase):
 
 
 def plot_xyz_diff(csv: RecordSLAM, axes: List[Axes]):
-    axes[0].plot(csv.time_diff, csv.x_diff, label=f"{csv.label} x", linewidth=2)
+    axes[0].plot(csv.time_diff, abs(csv.x_diff), label=f"{csv.label} x", linewidth=2)
     axes[0].set_ylabel("dx")
     axes[0].legend()
 
-    axes[1].plot(csv.time_diff, csv.y_diff, label=f"{csv.label} y", linewidth=2)
+    axes[1].plot(csv.time_diff, abs(csv.y_diff), label=f"{csv.label} y", linewidth=2)
     axes[1].set_ylabel("dy")
     axes[1].legend()
 
-    axes[2].plot(csv.time_diff, csv.z_diff, label=f"{csv.label} z", linewidth=2)
-    axes[2].set_ylabel("dz")
-    axes[2].legend()
+    # axes[2].plot(csv.time_diff, abs(csv.z_diff), label=f"{csv.label} z", linewidth=2)
+    # axes[2].set_ylabel("dz")
+    # axes[2].legend()
 
     for ax in axes:
         ax.grid(True)

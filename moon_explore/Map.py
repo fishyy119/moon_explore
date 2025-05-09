@@ -24,7 +24,7 @@ class Map:
     ) -> None:
         self.mask: NDArray[np.bool_] = np.zeros((501, 501), dtype=np.bool_)  # True表示已探明
         self.obstacle_mask: NDArray[np.bool_] = np.load(map_file)
-        self.map_divide: NDArray[np.int32] = np.load(map_divide)
+        self.map_divide: NDArray[np.int32] = np.load(map_divide)  #! 废案
         # 计算距离场，用于舍弃距离障碍物过近的候选点
         self.distance_ob: NDArray[np.float64] = distance_transform_edt(~self.obstacle_mask)  # type: ignore
         if load_mask is not None:
@@ -143,7 +143,6 @@ class Map:
         peak_indices = [idx for idx in local_maxima if curvature[idx] > threshold]
 
         # 3. 处理平峰：查找平峰区间，并保留中间的点
-
         new_peaks: List[int] = []
         if len(peak_indices) > 0:
             diff = np.diff(peak_indices)
@@ -216,7 +215,7 @@ class Map:
                 x1, y1 = int(contour[start, 0]), int(contour[start, 1])
                 x2, y2 = int(contour[end, 0]), int(contour[end, 1])
                 if math.hypot(y1 - y2, x1 - x2) < 10:
-                    continue  # * 拒绝很短的空间内出现的多个点
+                    continue  # * 拒绝过短的边界段
 
                 num_subsegments = int(np.ceil(seg_len / MAX_SEGMENT_LENGTH))
                 split_point_idxs = np.linspace(start, end, 2 * num_subsegments + 1, dtype=int)
@@ -277,10 +276,10 @@ class Map:
         """
         将候选点分配给不同的巡视器，基于距离和当前巡视器的位置。
         多巡视器：仅修改`self.rover_assignments`对应index的列表，其他区域的候选点舍弃
-        单巡视器：按照预设区域划分，将候选点分配到三个列表中
+        单巡视器：按照预设区域划分，将候选点分配到三个列表中（废案）
         """
         if len(self.rovers) == 1:
-            # 强制单巡视器在探索完一个子区域后再前往下一个区域
+            #! 废案，强制单巡视器在探索完一个子区域后再前往下一个区域，使用初始化参数的map_divide
             self.rover_assignments = [[] for _ in range(3)]
             for point in self.canPoints:
                 x, y = int(point.pose.x * Setting.MAP_SCALE), int(point.pose.y * Setting.MAP_SCALE)
@@ -312,7 +311,7 @@ class Map:
         if len(self.rovers) == 1:
             if True:
                 self.rovers[index].evaluate_candidate_points(self.canPoints, [], [])
-            else:
+            else:  #! else里就是使用map_divide进行分配的逻辑，没有使用
                 rover = self.rovers[0]
                 x, y = int(rover.rover_pose.x * Setting.MAP_SCALE), int(rover.rover_pose.y * Setting.MAP_SCALE)
                 sub_area = self.map_divide[y, x]

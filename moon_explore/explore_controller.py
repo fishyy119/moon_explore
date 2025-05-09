@@ -14,6 +14,7 @@ from datetime import datetime
 from moon_explore.Utils import Pose2D
 from moon_explore.Map import Map
 from moon_explore.Viewer import MaskViewer
+from moon_explore.Utils import Setting
 
 from enum import Enum, auto
 from typing import Callable, Dict, Optional
@@ -40,8 +41,8 @@ class RoverController:
         self.last_dist = 1000
 
         self.LOG = lambda msg: self.node.get_logger().info(str(msg))
-        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_true", self.robot_pose_callback, 10)
-        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_slam", self.robot_pose_callback, 10)
+        self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_true", self.robot_pose_callback, 10)
+        # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}_slam", self.robot_pose_callback, 10)
         # self.subscription = node.create_subscription(Pose, f"robot_pose_{rover_id}", self.robot_pose_callback, 10)
         self.publisher = node.create_publisher(Twist, f"cmd_vel_{rover_id}", 10)
 
@@ -115,7 +116,7 @@ class RoverController:
             twist.angular.z = 0.0
             twist.linear.x = 0.0
 
-        factor = 1.0
+        factor = 1.5
         twist.angular.z *= factor
         twist.linear.x *= factor
         self.publisher.publish(twist)
@@ -152,6 +153,11 @@ class ExploreController(Node):
         self.rovers: Dict[int, RoverController] = {}
         for i in range(num_rovers):
             self.rovers[i] = RoverController(self, i + 1, self.map, self.viewer)
+
+        # 记录参数
+        setting_record = Path(PROJECT_DIR) / "Data/settings.txt"
+        with open(setting_record, "a") as f:
+            f.write(f"{self.timestamp}: beta={Setting.eval.BETA}\n")
 
     def simulation_time_callback(self, msg: Float64) -> None:
         self.sim_time = msg.data  # 当前仿真时间

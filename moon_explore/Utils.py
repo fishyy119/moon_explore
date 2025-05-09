@@ -27,19 +27,21 @@ class Setting:
 
     @dataclass
     class Eval:
+        #! 废案，超过一定探索比例后切换加权系数
         RATIO_THRESHOLD: float = 0.4  # 当探索比例超过这个值切换策略
         ENABLED_SWITCH: bool = False  # 开关项，控制是否开启
-        NEW_BETA: float = 0.1
+        NEW_BETA: float = 0.4
 
+        # * 计算对路径耗时归一化所用的系数alpha
         D_M: float = 4  # 基准时间：直线距离m
         A_D: float = 30  # 基准时间：旋转角度deg
         L_S: float = 0.1  # 最大线速度 m/s
         A_S: float = 0.1  # 最大角速度 rad/s
-
-        BETA: float = 0.4
-
         BASE_TIME: float = field(init=False)
         ALPHA: float = field(init=False)
+
+        # * 加权系数beta
+        BETA: float = 0.0
 
         def __post_init__(self):
             self.BASE_TIME = self.D_M / self.L_S + np.deg2rad(self.A_D) / self.A_S
@@ -54,22 +56,6 @@ class Setting:
             return 100 * (1 - self.BETA)
 
     eval = Eval()
-
-    # class eval:
-    #     RATIO_THRESHOLD = 0.4  # 当探索比例超过这个值切换策略
-    #     ENABLED_SWITCH = True  # 开关项，控制是否开启
-
-    #     D_M = 4  # 基准时间：直线距离m
-    #     A_D = 30  # 基准时间：旋转角度deg
-    #     L_S = 0.1  # 最大线速度 m/s
-    #     A_S = 0.1  # 最大角速度 rad/s
-    #     BASE_TIME = D_M / L_S + np.deg2rad(A_D) / A_S
-    #     ALPHA = -np.log(0.8) / BASE_TIME
-    #     # print(ALPHA)
-
-    #     BETA = 0.4
-    #     T_SEG = 100 * BETA
-    #     T_PATH = 100 * (1 - BETA)
 
 
 class PoseDiff(NamedTuple):
