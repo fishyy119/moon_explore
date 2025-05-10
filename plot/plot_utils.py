@@ -7,6 +7,7 @@ import matplotlib.patches as patches
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as pe
 from matplotlib import cm
+from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.patches import Patch
@@ -27,6 +28,8 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from moon_explore.Utils import *
 
+# * 在最一开始设置这个，保证后面的字体全部生效
+plt.rcParams["font.family"] = ["Times New Roman", "SimSun"]
 
 NPY_ROOT = Path(__file__).parent.parent / "resource"
 MAP_PASSABLE = np.load(NPY_ROOT / "map_passable.npy")
@@ -61,12 +64,16 @@ class RateCSV:
         self,
         file: Path | str,
         label: str | None = None,
-        threshold: float = 49.1,
+        linestyle: str = "-",
+        color: str | None = None,
+        threshold: float = 49.1,  # 预处理得到的
         root: Path = _get_default_root("RateCSV"),
         factor: float = 1,  # 忘了修改速度指令的倍数，在这里修正
     ):
         self.file = root / file
         self.label = label or self.file.stem
+        self.linestyle = linestyle
+        self.color = color
         self._data = pd.read_csv(self.file).astype(float)
         self.rate = self._data["view_grids"] / 501 / 501 * 100 / threshold * 100
         self.time = self._data["time"].round(1) / factor
@@ -83,9 +90,20 @@ class RateCSV:
 
 
 class RecordBase(ABC):
-    def __init__(self, file: Path | str, label: str | None = None, root: Path = _get_default_root("RecordCSV")):
+    def __init__(
+        self,
+        file: Path | str,
+        label: str | None = None,
+        linestyle: str = "-",
+        color: str | None = None,
+        root: Path = _get_default_root("RecordCSV"),
+        t_factor: float = 1.0,  # 有的数据运行速度倍数设错了，使用这个修正
+    ):
         self.file = root / file
         self.label = label or self.file.stem
+        self.linestyle = linestyle
+        self.color = color
+        self.t_factor = t_factor
         self._data = self._load_data()
         self.se3 = self._prepare_se3()
 
@@ -131,7 +149,7 @@ class RecordBase(ABC):
 
     @property
     def time(self) -> Series:
-        return self._data["time"]
+        return self._data["time"] / self.t_factor
 
     @property
     def x(self) -> Series:
@@ -181,7 +199,7 @@ class RecordSLAM(RecordBase):
         label: str | None = None,
         root: Path = _get_default_root("RecordCSV"),
     ):
-        super().__init__(file, label, root)
+        super().__init__(file, label, root=root)
         self.se3_relative = self.se3.copy()  # 基类在初始化时就生成了它，但是这是相对坐标系的
         self.recordAb = recordAb  # 绝对坐标系的记录
         self.align_to_absolute()  # 这里面se3被修改为绝对坐标系
@@ -290,33 +308,85 @@ def plot_xyz_diff(csv: RecordSLAM, axes: List[Axes]):
 
 
 def plot_rate_csv(csv: RateCSV, ax: Axes):
-    plt.plot(csv.x, csv.y, label=csv.label, linewidth=2)
+    plt.plot(csv.x, csv.y, label=csv.label, linestyle=csv.linestyle, color=csv.color, linewidth=1.5)
 
 
 def ax_remove_axis(ax: Axes) -> None:
     # 对于绘制地图，去除坐标轴，添加黑色边框
     ax.axis("off")
-    h, w = 501, 501
-    rect = patches.Rectangle((0, 0), w, h, linewidth=2, edgecolor="black", facecolor="none", transform=ax.transData)
+    ax_add_black_border(ax, (0, 501), (0, 501))
+
+
+def ax_set_square_lim(ax: Axes, xlim: Tuple[float, float], ylim: Tuple[float, float], border=False):
+    x0, x1 = xlim
+    y0, y1 = ylim
+    w_x = x1 - x0
+    w_y = y1 - y0
+    if w_x > w_y:
+        ylim = (y0 - (w_x - w_y) / 2, y1 + (w_x - w_y) / 2)
+    else:
+        xlim = (x0 - (w_y - w_x) / 2, x1 + (w_y - w_x) / 2)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    if border:
+        ax_add_black_border(ax, xlim, ylim)
+
+
+def ax_add_black_border(ax: Axes, xlim: Tuple[float, float], ylim: Tuple[float, float]) -> None:
+    rect = patches.Rectangle(
+        (xlim[0], ylim[0]),
+        xlim[1] - xlim[0],
+        ylim[1] - ylim[0],
+        linewidth=2,
+        edgecolor="black",
+        facecolor="none",
+        transform=ax.transData,
+    )
     ax.add_patch(rect)
 
 
-def ax_add_legend(ax: Axes, legend_handles=None) -> None:
+def ax_add_legend(ax: Axes, legend_handles=None, alpha=1.0) -> None:
     # 自动设置图例样式
     # legend = ax.legend(handles=legend_handles, loc="upper right", title="")
-    legend = ax.legend(handles=legend_handles)
+    legend = ax.legend(
+        handles=legend_handles,
+        fontsize=10.5,
+        prop={"family": ["SimSun", "Times New Roman"]},  # 中文宋体，西文 Times New Roman
+        loc="best",
+    )
     legend.get_frame().set_facecolor("white")
-    legend.get_frame().set_alpha(1.0)
+    legend.get_frame().set_alpha(alpha)
     legend.get_frame().set_edgecolor("black")
 
 
 def axes_add_abc(axes: List[Axes]) -> None:
     # 添加图注 (a), (b)
     for i, ax in enumerate(axes):
-        ax.text(0.5, -0.05, f"({chr(97 + i)})", transform=ax.transAxes, fontsize=12, ha="center", va="top")
+        ax.text(
+            0.5,
+            -0.05,
+            f"({chr(97 + i)})",
+            transform=ax.transAxes,
+            fontsize=10.5,  # 五号字体，用于图注
+            fontname="Times New Roman",
+            ha="center",
+            va="top",
+        )
 
 
-def plt_tight_show() -> None:
+def plt_tight_show(factor: float = 1) -> None:
+    # A4 尺寸
+    left_margin_mm = 30
+    right_margin_mm = 26
+    usable_width_cm = (210 - left_margin_mm - right_margin_mm) / 10  # mm → cm
+    # 转为英寸
+    fig_width_in = usable_width_cm / 2.54
+
+    fig = plt.gcf()
+    _, fig_height_in = fig.get_size_inches()
+    fig.set_size_inches(fig_width_in * factor, fig_height_in)
+    # 限制宽度，便于预览论文上的字体大小效果
+
     plt.tight_layout()
     plt.show()
 
@@ -328,15 +398,62 @@ def plt_flat_axes(axes: List[List[Axes]]) -> List[Axes]:
 
 
 def plot_path_map(csv: RecordBase, ax: Axes):
-    ax.plot(csv.x_map, csv.y_map, label=csv.label, linewidth=2)
+    ax.plot(csv.x_map, csv.y_map, label=csv.label, linestyle=csv.linestyle, color=csv.color, linewidth=2)
+    ax.margins(x=0.05, y=0.05)
 
-    # 添加图例
-    legend = ax.legend(loc="best")
 
-    # 设置 legend 背景为不透明白色
-    legend.get_frame().set_facecolor("white")  # 设置为白底
-    legend.get_frame().set_alpha(1.0)  # 设置完全不透明
-    legend.get_frame().set_edgecolor("black")  # 可选：边框变为黑色
+def plot_path_distance_map(csv: RecordBase, ax: Axes):
+    x = csv.x_map.to_numpy()
+    y = csv.y_map.to_numpy()
+    distances = [MAP_EDF[int(yi), int(xi)] for xi, yi in zip(x, y)]
+
+    # 构造连续线段 [(x0,y0)-(x1,y1), (x1,y1)-(x2,y2), ...]
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    # 创建 LineCollection，用距离值做颜色映射
+    lc = LineCollection(segments, cmap="viridis", norm=Normalize(vmin=min(distances), vmax=max(distances)))  # type: ignore
+    lc.set_array(np.array(distances))  # 将距离值传给颜色映射
+    lc.set_linewidth(2)
+    ax.add_collection(lc)
+
+    # 为了显示颜色条，创建一个辅助轴
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+
+    # 创建 colorbar 并设置样式
+    cb = ax.figure.colorbar(lc, cax=cax, orientation="vertical")  # type: ignore
+    cb.ax.set_title("距离 (m)", fontsize=10.5, pad=8)
+    # 设置 colorbar 的刻度为最小值、中间值和最大值
+    ticks = [min(distances), np.median(distances), max(distances)]
+    cb.set_ticks(ticks)
+    for label in cb.ax.get_yticklabels():
+        label.set_fontname("Times New Roman")
+
+
+def plot_path_time_map(csv: RecordBase, ax: Axes):
+    x = csv.x_map.to_numpy()
+    y = csv.y_map.to_numpy()
+    t = csv.time.to_numpy()
+
+    # 构造连续线段 [(x0,y0)-(x1,y1), (x1,y1)-(x2,y2), ...]
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    # 创建 LineCollection，用时间做颜色映射
+    lc = LineCollection(segments, cmap="viridis", norm=Normalize(t.min(), t.max()))  # type: ignore
+    lc.set_array(t)
+    lc.set_linewidth(2)
+    ax.add_collection(lc)
+
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+
+    # 创建 colorbar 并设置样式
+    cb = ax.figure.colorbar(lc, cax=cax, orientation="vertical")  # type: ignore
+    cb.ax.set_title("时间 (s)", fontsize=10.5, pad=5)
+    for label in cb.ax.get_yticklabels():
+        label.set_fontname("Times New Roman")
 
 
 def plot_contours_map(contours: List[Contour], ax: Axes, show_peak=True):
@@ -392,8 +509,13 @@ def plot_canPoints_map(canPoints: List[CandidatePoint], ax: Axes):
 
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    cb = ax.figure.colorbar(sm, cax=cax)  # type: ignore
-    cb.set_label("Score", labelpad=15)
+    # cb = ax.figure.colorbar(sm, cax=cax)  # type: ignore
+
+    cb = ax.figure.colorbar(sm, cax=cax, orientation="vertical")  # type: ignore
+    cb.ax.set_title("评分", fontsize=10.5, pad=5)
+    # cb.ax.yaxis.set_tick_params(labelsize=10)
+    for label in cb.ax.get_yticklabels():
+        label.set_fontname("Times New Roman")
 
 
 def plot_binary_map(map: NDArray[np.bool_], ax: Axes, visible_map: NDArray[np.bool_] | None = None, alpha: float = 1):
@@ -416,7 +538,10 @@ def plot_edf_map(map: NDArray[np.float64], ax: Axes) -> None:
     im = ax.imshow(map, interpolation="nearest", origin="lower")
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    ax.figure.colorbar(im, cax=cax, orientation="vertical", label="Distance (m)")  # type: ignore
+    cb = ax.figure.colorbar(im, cax=cax, orientation="vertical", label="距离 (m)")  # type: ignore
+    cb.ax.yaxis.set_tick_params(labelsize=10.5)
+    for label in cb.ax.get_yticklabels():
+        label.set_fontname("Times New Roman")
     ax_remove_axis(ax)
 
 
@@ -448,5 +573,5 @@ def plot_slope_map(slope: NDArray, ax: Axes, passable_threshold: List[float] = [
     ]
     legend_patches = [Patch(color=color, label=label) for color, label in zip(color_list, legend_labels)]
 
-    ax_add_legend(ax, legend_handles=legend_patches)
+    ax_add_legend(ax, legend_handles=legend_patches, alpha=0.8)
     ax_remove_axis(ax)

@@ -1,5 +1,4 @@
-import matplotlib.pyplot as plt
-from plot_utils import RateCSV, plot_rate_csv
+from plot_utils import *
 
 from typing import List
 
@@ -26,36 +25,40 @@ if __name__ == "__main__":
     ]
 
     # 起始位置1
-    csvs: List[RateCSV] = [
-        RateCSV("rate_0508_142851.csv", r"$\beta=0$"),
+    csvs1: List[RateCSV] = [
+        # RateCSV("rate_0508_142851.csv", r"$\beta=0$"),
+        RateCSV("rate_0509_031047.csv", r"$\beta=0$", "--", "black"),
+        RateCSV("rate_0508_204418.csv", r"$\beta=0.1$"),
         RateCSV("rate_0508_183110.csv", r"$\beta=0.2$"),
         RateCSV("rate_0508_194216.csv", r"$\beta=0.3$"),
-        RateCSV("rate_0508_204418.csv", r"$\beta=0.1$"),
         RateCSV("rate_0508_223134.csv", r"$\beta=0.4$"),
-        RateCSV("rate_0509_015148.csv", r"$\beta=0.4$"),
-        RateCSV("rate_0509_031047.csv", r"$\beta=0$"),
+        # RateCSV("rate_0509_015148.csv", r"$\beta=0.4$"),
     ]
 
     # 起始位置2
-    # csvs: List[RateCSV] = [
-    #     RateCSV("rate_0507_112309.csv", r"$\beta=0$"),
-    #     RateCSV("rate_0507_134315.csv", r"$\beta=0.1$"),
-    #     RateCSV("rate_0507_091436.csv", r"$\beta=0.4$"),
-    #     RateCSV("rate_0507_153709.csv", r"$\beta=0.2$"),
-    #     RateCSV("rate_0507_183100.csv", r"$\beta=0.3$"),
-    # ]
+    csvs2: List[RateCSV] = [
+        RateCSV("rate_0507_112309.csv", r"$\beta=0$", "--", "black", factor=1.5),
+        RateCSV("rate_0507_134315.csv", r"$\beta=0.1$", factor=1.5),
+        RateCSV("rate_0507_153709.csv", r"$\beta=0.2$", factor=1.5),
+        RateCSV("rate_0507_183100.csv", r"$\beta=0.3$", factor=1.5),
+        RateCSV("rate_0507_091436.csv", r"$\beta=0.4$", factor=1.5),
+    ]
+
+    # 多巡视器与单巡视器对比
+    csvs3: List[RateCSV] = [
+        RateCSV("rate_0508_223134.csv", r"单巡视器（时间轴压缩后）", factor=2),
+        # RateCSV("rate_0422_162350.csv", r"$\beta = 0.4$"),
+        RateCSV("rate_0424_162835.csv", r"双巡视器"),
+    ]
 
     fig, ax = plt.subplots()
-    for csv in csvs:
+    for csv in csvs2:
         plot_rate_csv(csv, ax)
+        print(csv.label, csv.x.iloc[-1])
 
-    plt.rcParams["font.sans-serif"] = ["SimSun"]  # 设置中文字体为宋体
-    plt.rcParams["axes.unicode_minus"] = False
-    plt.rcParams.update({"font.size": 10})  # 设置字体大小
+    ax.set_xlabel("时间 (s)", fontsize=10.5)
+    ax.set_ylabel("探索率 (%)", fontsize=10.5)
+    ax.grid(True, axis="both")
 
-    plt.xlabel("时间 (s)")
-    plt.ylabel("探索率 (%)")
-    plt.legend()
-    plt.grid(True, axis="both")
-    plt.tight_layout()
-    plt.show()
+    ax_add_legend(ax)
+    plt_tight_show()
