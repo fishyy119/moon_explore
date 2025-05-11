@@ -30,6 +30,7 @@ from moon_explore.Utils import *
 
 # * 在最一开始设置这个，保证后面的字体全部生效
 plt.rcParams["font.family"] = ["Times New Roman", "SimSun"]
+plt.rcParams.update({"axes.labelsize": 10.5, "xtick.labelsize": 10.5, "ytick.labelsize": 10.5})
 
 NPY_ROOT = Path(__file__).parent.parent / "resource"
 MAP_PASSABLE = np.load(NPY_ROOT / "map_passable.npy")
@@ -192,18 +193,12 @@ class RecordCSV(RecordBase):
 
 
 class RecordSLAM(RecordBase):
-    def __init__(
-        self,
-        recordAb: RecordCSV,
-        file: Path | str,
-        label: str | None = None,
-        root: Path = _get_default_root("RecordCSV"),
-    ):
-        super().__init__(file, label, root=root)
+    def link_recordAb(self, recordAb: RecordCSV):
         self.se3_relative = self.se3.copy()  # 基类在初始化时就生成了它，但是这是相对坐标系的
         self.recordAb = recordAb  # 绝对坐标系的记录
         self.align_to_absolute()  # 这里面se3被修改为绝对坐标系
         self.cal_xyz_diff()  # 计算绝对坐标系下的差值，存为self.xyz_diff
+        return self
 
     def _load_data(self) -> DataFrame:
         return pd.read_csv(
@@ -286,22 +281,74 @@ class RecordSLAM(RecordBase):
         return self.xyz_diff["dy"]
 
     @property
+    def xy_diff(self) -> Series:
+        sq = self.xyz_diff["dx"] ** 2 + self.xyz_diff["dy"] ** 2
+        return pd.Series(np.sqrt(sq))
+
+    @property
     def z_diff(self) -> Series:
         return self.xyz_diff["dz"]
 
 
+def print_slam_report(csv_mix: RecordSLAM, csv_pure: RecordSLAM, ax: Axes):
+    # 计算统计指标
+    def describe_stats(data):
+        return {
+            "max": np.max(data),
+            "min": np.min(data),
+            "mean": np.mean(data),
+            "median": np.median(data),
+            "rms": np.sqrt(np.mean(data**2)),
+            "std": np.std(data),
+        }
+
+    stats1 = describe_stats(csv_mix.xy_diff)
+    stats2 = describe_stats(csv_pure.xy_diff)
+    df_stats = pd.DataFrame({"Group 1": stats1, "Group 2": stats2})
+
+    # 画图
+    # 横向分组柱状图
+    indicators = df_stats.index.tolist()
+    y = np.arange(len(indicators))  # y轴位置
+    bar_height = 0.35
+
+    ax.barh(y - bar_height / 2 - 0.01, df_stats["Group 1"], height=bar_height, label="融合定位框架")
+    ax.barh(y + bar_height / 2 + 0.01, df_stats["Group 2"], height=bar_height, label="纯视觉SLAM")
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(["最大值", "最小值", "平均值", "中位数", "均方根", "标准差"])
+    ax.invert_yaxis()  # 从上到下显示
+    ax_add_legend(ax)
+    ax.grid(True, axis="x")
+
+    print(f"融合 - 纯SLAM")
+    print(f"最大值: {stats1['max']:.4f} - {stats2['max']:.4f}")
+    print(f"最小值: {stats1['min']:.4f} - {stats2['min']:.4f}")
+    print(f"平均值: {stats1['mean']:.4f} - {stats2['mean']:.4f}")
+    print(f"中位数: {stats1['median']:.4f} - {stats2['median']:.4f}")
+    print(f"均方根: {stats1['rms']:.4f} - {stats2['rms']:.4f}")
+    print(f"标准差: {stats1['std']:.4f} - {stats2['std']:.4f}")
+
+
 def plot_xyz_diff(csv: RecordSLAM, axes: List[Axes]):
-    axes[0].plot(csv.time_diff, abs(csv.x_diff), label=f"{csv.label} x", linewidth=2)
-    axes[0].set_ylabel("dx")
+    for ax in axes:
+        ax.grid(True, axis="y")
+    axes[0].plot(csv.time_diff, abs(csv.x_diff), label=f"{csv.label}", linewidth=2)
+    axes[0].set_ylabel("x轴误差 (m)", fontsize=10.5)
+    axes[0].get_xaxis().set_visible(False)
+
+    axes[1].plot(csv.time_diff, abs(csv.y_diff), label=f"{csv.label}", linewidth=2)
+    axes[1].set_ylabel("y轴误差 (m)", fontsize=10.5)
+    axes[1].set_xlabel("时间 (s)", fontsize=10.5)
+
+
+def plot_xyz(csv: RecordBase, axes: List[Axes]):
+    axes[0].plot(csv.time, csv.x, label=f"{csv.label}", linewidth=1)
+    axes[0].set_ylabel("x")
     axes[0].legend()
 
-    axes[1].plot(csv.time_diff, abs(csv.y_diff), label=f"{csv.label} y", linewidth=2)
-    axes[1].set_ylabel("dy")
-    axes[1].legend()
-
-    # axes[2].plot(csv.time_diff, abs(csv.z_diff), label=f"{csv.label} z", linewidth=2)
-    # axes[2].set_ylabel("dz")
-    # axes[2].legend()
+    axes[1].plot(csv.time, csv.y, label=f"{csv.label}", linewidth=1)
+    axes[1].set_ylabel("y ")
 
     for ax in axes:
         ax.grid(True)
@@ -317,7 +364,13 @@ def ax_remove_axis(ax: Axes) -> None:
     ax_add_black_border(ax, (0, 501), (0, 501))
 
 
-def ax_set_square_lim(ax: Axes, xlim: Tuple[float, float], ylim: Tuple[float, float], border=False):
+def ax_set_square_lim(
+    ax: Axes, xlim: Tuple[float, float] | None = None, ylim: Tuple[float, float] | None = None, border=False
+):
+    if xlim is None or ylim is None:
+        ax.margins(x=0.05, y=0.05)
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
     x0, x1 = xlim
     y0, y1 = ylim
     w_x = x1 - x0
@@ -328,6 +381,7 @@ def ax_set_square_lim(ax: Axes, xlim: Tuple[float, float], ylim: Tuple[float, fl
         xlim = (x0 - (w_y - w_x) / 2, x1 + (w_y - w_x) / 2)
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
+    ax.set_aspect("equal")
     if border:
         ax_add_black_border(ax, xlim, ylim)
 
@@ -359,12 +413,12 @@ def ax_add_legend(ax: Axes, legend_handles=None, alpha=1.0) -> None:
     legend.get_frame().set_edgecolor("black")
 
 
-def axes_add_abc(axes: List[Axes]) -> None:
+def axes_add_abc(axes: List[Axes], y_offset=-0.05) -> None:
     # 添加图注 (a), (b)
     for i, ax in enumerate(axes):
         ax.text(
             0.5,
-            -0.05,
+            y_offset,
             f"({chr(97 + i)})",
             transform=ax.transAxes,
             fontsize=10.5,  # 五号字体，用于图注
@@ -382,12 +436,15 @@ def plt_tight_show(factor: float = 1) -> None:
     # 转为英寸
     fig_width_in = usable_width_cm / 2.54
 
-    fig = plt.gcf()
-    _, fig_height_in = fig.get_size_inches()
-    fig.set_size_inches(fig_width_in * factor, fig_height_in)
-    # 限制宽度，便于预览论文上的字体大小效果
+    for i in plt.get_fignums():
+        fig = plt.figure(i)
+        fig.tight_layout()
+        _, fig_height_in = fig.get_size_inches()
+        fig.set_size_inches(fig_width_in * factor, fig_height_in)
+        # 限制宽度，便于预览论文上的字体大小效果
 
-    plt.tight_layout()
+        plt.tight_layout()
+
     plt.show()
 
 
@@ -397,9 +454,45 @@ def plt_flat_axes(axes: List[List[Axes]]) -> List[Axes]:
     return flat_axes
 
 
+def plot_path_slam(csv: RecordBase, ax: Axes):
+    ax.plot(csv.x, csv.y, label=csv.label, linestyle=csv.linestyle, color=csv.color, linewidth=2)
+    ax.margins(x=0.05, y=0.05)
+
+
 def plot_path_map(csv: RecordBase, ax: Axes):
     ax.plot(csv.x_map, csv.y_map, label=csv.label, linestyle=csv.linestyle, color=csv.color, linewidth=2)
     ax.margins(x=0.05, y=0.05)
+
+
+def plot_slam_path_error(csv: RecordSLAM, ax: Axes):
+    x = csv.x.to_numpy()
+    y = csv.y.to_numpy()
+    errors = csv.xy_diff.to_numpy()
+
+    # 构造连续线段 [(x0,y0)-(x1,y1), (x1,y1)-(x2,y2), ...]
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    # 创建 LineCollection，用距离值做颜色映射
+    lc = LineCollection(segments, cmap="viridis", norm=Normalize(vmin=min(errors), vmax=max(errors)))  # type: ignore
+    lc.set_array(np.array(errors))  # 将距离值传给颜色映射
+    lc.set_linewidth(2)
+    ax.add_collection(lc)
+
+    # 为了显示颜色条，创建一个辅助轴
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+
+    # 创建 colorbar 并设置样式
+    cb = ax.figure.colorbar(lc, cax=cax, orientation="vertical")  # type: ignore
+    cb.ax.set_title("误差 (m)", fontsize=10.5, pad=8)
+    # 设置 colorbar 的刻度为最小值、中间值和最大值
+    ticks = [min(errors), np.median(errors), max(errors)]
+    cb.set_ticks(ticks)
+    for label in cb.ax.get_yticklabels():
+        label.set_fontname("Times New Roman")
+    ax.axis("off")
+    ax_set_square_lim(ax, border=True)
 
 
 def plot_path_distance_map(csv: RecordBase, ax: Axes):
