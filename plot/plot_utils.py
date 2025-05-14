@@ -35,6 +35,7 @@ plt.rcParams.update({"axes.labelsize": 10.5, "xtick.labelsize": 10.5, "ytick.lab
 NPY_ROOT = Path(__file__).parent.parent / "resource"
 MAP_PASSABLE = np.load(NPY_ROOT / "map_passable.npy")
 MAP_EXPLORABLE = np.load(NPY_ROOT / "map_explorable.npy")
+MAP_SCENARIO = np.load(NPY_ROOT / "map_truth.npy").T
 MAP_SLOPE = np.load(NPY_ROOT / "map_slope.npy").T
 MAP_EDF: NDArray[np.float64] = distance_transform_edt(~MAP_PASSABLE) / 10  # type: ignore
 
@@ -635,6 +636,11 @@ def plot_edf_map(map: NDArray[np.float64], ax: Axes) -> None:
     cb.ax.yaxis.set_tick_params(labelsize=10.5)
     for label in cb.ax.get_yticklabels():
         label.set_fontname("Times New Roman")
+    ax_remove_axis(ax)
+
+
+def plot_scenario_map(dem: NDArray[np.float64], ax: Axes) -> None:
+    ax.imshow(dem, cmap="gist_yarg", origin="lower")
     ax_remove_axis(ax)
 
 
