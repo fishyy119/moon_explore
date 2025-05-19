@@ -23,6 +23,13 @@ plot_xyz_diff(txt21, axes12)
 plot_xyz_diff(txt22, axes12)
 ax_add_legend(axes12[0])
 
+fig1, axes1 = plt.subplots(2, 2)
+plot_xyz_diff(txt11, [axes1[0][0], axes1[1][0]])
+plot_xyz_diff(txt12, [axes1[0][0], axes1[1][0]])
+plot_xyz_diff(txt21, [axes1[0][1], axes1[1][1]])
+plot_xyz_diff(txt22, [axes1[0][1], axes1[1][1]])
+ax_add_legend(axes1[0][0])
+
 
 fig2, axes2 = plt.subplots(2, 2)
 plot_slam_path_error(txt11, axes2[0][0])
@@ -30,6 +37,12 @@ plot_slam_path_error(txt12, axes2[0][1])
 plot_slam_path_error(txt21, axes2[1][0])
 plot_slam_path_error(txt22, axes2[1][1])
 axes_add_abc(plt_flat_axes(axes2))
+
+# fig2ppt, axes2ppt = plt.subplots(1, 4)
+# plot_slam_path_error(txt11, axes2ppt[0])
+# plot_slam_path_error(txt12, axes2ppt[1])
+# plot_slam_path_error(txt21, axes2ppt[2])
+# plot_slam_path_error(txt22, axes2ppt[3])
 
 
 fig3, axes3 = plt.subplots(1, 2)

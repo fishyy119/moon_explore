@@ -80,4 +80,5 @@ ax.set_ylim(10, 130)
 
 ax_add_legend(ax, legend_elements)
 ax_remove_axis(ax)
+ax_add_black_border(ax, (10, 130), (10, 130))
 plt_tight_show()

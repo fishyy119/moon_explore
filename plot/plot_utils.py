@@ -30,6 +30,10 @@ from moon_explore.Utils import *
 
 # * 在最一开始设置这个，保证后面的字体全部生效
 plt.rcParams["font.family"] = ["Times New Roman", "SimSun"]
+# 感觉不生效
+# plt.rcParams["mathtext.rm"] = "Times New Roman"  # 数学普通字体
+# plt.rcParams["mathtext.it"] = "Times New Roman:italic"  # 数学斜体
+# plt.rcParams["mathtext.bf"] = "Times New Roman:bold"  # 数学粗体
 plt.rcParams.update({"axes.labelsize": 10.5, "xtick.labelsize": 10.5, "ytick.labelsize": 10.5})
 
 NPY_ROOT = Path(__file__).parent.parent / "resource"
@@ -628,12 +632,15 @@ def plot_binary_map(map: NDArray[np.bool_], ax: Axes, visible_map: NDArray[np.bo
     ax_remove_axis(ax)
 
 
-def plot_edf_map(map: NDArray[np.float64], ax: Axes) -> None:
+def plot_edf_map(map: NDArray[np.float64], ax: Axes, label_right: bool = True) -> None:
     im = ax.imshow(map, interpolation="nearest", origin="lower")
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
-    cb = ax.figure.colorbar(im, cax=cax, orientation="vertical", label="距离 (m)")  # type: ignore
-    cb.ax.yaxis.set_tick_params(labelsize=10.5)
+    cb = ax.figure.colorbar(im, cax=cax, orientation="vertical")  # type: ignore
+    if label_right:  # 是把标签放到右边还是上边
+        cb.ax.yaxis.set_label_text("距离 (m)")
+    else:
+        cb.ax.set_title("距离 (m)", fontsize=10.5, pad=8)
     for label in cb.ax.get_yticklabels():
         label.set_fontname("Times New Roman")
     ax_remove_axis(ax)
