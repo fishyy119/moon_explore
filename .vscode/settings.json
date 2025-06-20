@@ -1,29 +1,6 @@
 {
-  // "python.analysis.typeCheckingMode": "basic",
   "python.analysis.autoSearchPaths": true,
   "python.analysis.useLibraryCodeForTypes": true,
-  "ros.distro": "humble",
-  "python.autoComplete.extraPaths": [
-    "/home/yyy/webots/lib/controller/python36"
-  ],
-  "python.analysis.extraPaths": [
-    "/home/yyy/webots/lib/controller/python36"
-  ],
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
-    "editor.codeActionsOnSave": {
-      "source.organizeImports": "explicit"
-    },
-    "editor.formatOnSave": true
-  },
-  "black-formatter.args": [
-    "--line-length",
-    "120"
-  ],
-  "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "python.analysis.autoImportCompletions": true,
   "terminal.integrated.env.windows": { // 同下，但是这个没有测试
     "PYTHONPATH": "${workspaceFolder}"
   },
